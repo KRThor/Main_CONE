@@ -479,6 +479,7 @@ class MainFrame(tk.Frame):
     def main_password_check(self, event):
         readPassword = tk.Entry.get(self.entry)
         if readPassword == self.Password:
+            self.main_canvas.itemconfig(self.stateText, state = 'hidden')
             self.main_canvas.itemconfig(self.AdminPasswordBg, state = 'hidden')
             self.main_canvas.itemconfig(self.showEntry, window = '')
             self.entry.delete(0,999)
@@ -2017,12 +2018,6 @@ class historyProduceFrame(tk.Frame):
                 TotalSearchValue[3] += value[4]
                 TotalSearchValue[4] += value[5]
 
-            # sql 출력 확인
-            # for i in range(len(listboxUpdateText)):
-            #     print(listboxUpdateText[i])
-
-            # listboxUpdateText.reverse()
-
             for i in range(len(listboxUpdateText)):
                 self.history_produce_log.insert(0, f'{i+1}  \t'+listboxUpdateText[i])
 
@@ -2374,20 +2369,26 @@ class AdminManagementFrame(tk.Frame):
                 main_frame.update_signal("[ ★ ] 코드 업데이트")
                 TSD.sendAllClient("UPDATE")
 
+                repo_name = f'Main_{CodeSetup}'
+
                 try :
                     if os.path.exists('Main_.py'):         
                         os.remove("Main_.py")     # 기존 백업 메인 코드 삭제
 
                     if os.path.exists('Main.py'): # 기존 메인 코드 백업         
                         os.rename('Main.py', 'Main_.py') 
-                    git_url = 'http://sinplat.synology.me:30000/jinsu/cd.git' # 코드 업데이트할 깃랩 주소
+                    git_url = f'https://github.com/KRThor/{repo_name}.git' # 코드 업데이트할 깃허브 주소
                     self.git_clone(git_url) # 다운로드
-                    time.sleep(0.5)
-                    os.rename('cd/Main.py', 'Main.py') # 다운로드 받은 코드 경로 수정
-                    time.sleep(0.5)
-                    dir = "cd"
-                    os.system('rmdir /S /Q "{}"'.format(dir)) # 다운로드 받은 파일 삭제 (파일 있으면 충돌로 에러나서 업데이트 후 삭제)
-                    print("[★] 코드 다운로드 성공")
+                    print("[★] 코드 다운로드")
+                    time.sleep(0.2)
+                    os.rename(f'{repo_name}/Main.py', 'Main.py') # 다운로드 받은 코드 경로 수정
+                    time.sleep(0.2)
+                    os.system(f'rmdir /S /Q {repo_name}') # 다운로드 받은 파일 삭제 (파일 있으면 충돌로 에러나서 업데이트 후 삭제)
+                    print("[★] 폴더 제거")
+                    time.sleep(0.2)
+                    os.system('python compile_M.py')
+                    print("[★] 코드 컴파일")
+                    print('[★] 코드 업데이트 성공')
                     logger.info(f"[Notice] 코드 업데이트 성공")
                 except :
                     print("[★] 코드 다운로드 실패")
