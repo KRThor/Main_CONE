@@ -1,4 +1,4 @@
-# [INFO] '24.02.14 Update
+# [INFO] '24.02.26 Update
 
 # usb upload interface module
 from multiprocessing.sharedctypes import Value
@@ -6621,7 +6621,7 @@ def loadCount():
 
 
 if __name__ == "__main__":
-    print("[INFO] '24.02.14 Update")
+    print("[INFO] '24.02.26 Update")
     DTT = DataTrimThread()
     DB = Database('bearingart', 'model_data', LINE) # DB명, table명, line명
 
