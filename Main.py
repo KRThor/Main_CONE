@@ -4711,7 +4711,7 @@ class serialTRAN(threading.Thread):
                             print("Client All Connect Wait")
                         indexData = int(self.recvModbusChecker[1])
                         self.nowModel = DTT.ProductData[indexData-1]
-                        
+
                         main_frame.update_signal(f"{self.MDdict[indexData]} recv")
                         TSD.sendAllClient(self.MDdict[indexData])
                         print(f"모델신호 {self.MDdict[indexData]} 송신")
@@ -5933,7 +5933,7 @@ class OpenpyxlModul():
         self.writeExcelFilename = ''
 
         self.xlsx_file_name = '' # 일일현황 파일 이름
-
+        
     def ExcelDataLoad(self, Path):
         try:
             #"C:\\Users\\ParkJH\\Desktop\\엑셀프로젝트\\test.xlsx"
@@ -6063,7 +6063,7 @@ class DB_DataRequest():
                         DataDict[returnData[i][x]] = {'TotalCount' : 0, 'OKCount' : 0, 'NGCount' : 0, 'CriticalNGCount' : 0, 'CriticalNGPartCount' : [0,0,0,0], 'Product' : []}
                         keyCheck = returnData[i][x]
                         UpdateValue[0] = returnData[i][x]
-                if 2 <= x <= 7: #불량 유형
+                if 2 <= x <= 6: #불량 유형
                     if '1' in returnData[i][x]:
                         Index = returnData[i][x].index('1')
                         # print(f'{Index} - 불량 체크 ({self.badTypeName[Index]})')
@@ -6084,7 +6084,7 @@ class DB_DataRequest():
                             UpdateValue[2] = self.badTypeName[Index]
                         else:
                             UpdateValue[2] += f', {self.badTypeName[Index]}'
-                if x == 14: #업데이트 시간
+                if x == 12: #업데이트 시간
                     UpdateValue[1] = returnData[i][x]
 
             if checkValue[1] != 0:
