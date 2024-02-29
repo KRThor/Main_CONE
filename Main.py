@@ -1,4 +1,4 @@
-# [INFO] '24.02.26 Update
+# [INFO] '24.02.29 Update
 
 # usb upload interface module
 from multiprocessing.sharedctypes import Value
@@ -5888,17 +5888,18 @@ class TimeExcel:
                     elif self.send_mail_success == False :
                         print("전송 실패")
 
-                if self.send_mail_success == False :
-                    time.sleep(600) # 10분 마다 재시도
-                    print('메일 전송 재시도')
-                    logger.info(f"mail send retry")
-                    self.send_mail_success = Email.mailSendProcess()
-                    if self.send_mail_success == True:
-                        self.send_mail_success = 'yet'
-                        print("전송 완료")
-                        self.remove_xlsx()
-                    elif self.send_mail_success == False :
-                        print("전송 실패")
+                # 재시도 반복되면서 08시 작업 미실시되는 현상으로 주석 처리
+                # if self.send_mail_success == False :
+                #     time.sleep(600) # 10분 마다 재시도
+                #     print('메일 전송 재시도')
+                #     logger.info(f"mail send retry")
+                #     self.send_mail_success = Email.mailSendProcess()
+                #     if self.send_mail_success == True:
+                #         self.send_mail_success = 'yet'
+                #         print("전송 완료")
+                #         self.remove_xlsx()
+                #     elif self.send_mail_success == False :
+                #         print("전송 실패")
 
             except Exception as ex:
                 print(ex)
@@ -6621,7 +6622,7 @@ def loadCount():
 
 
 if __name__ == "__main__":
-    print("[INFO] '24.02.26 Update")
+    print("[INFO] '24.02.29 Update")
     DTT = DataTrimThread()
     DB = Database('bearingart', 'model_data', LINE) # DB명, table명, line명
 
