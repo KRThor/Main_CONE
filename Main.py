@@ -1,4 +1,4 @@
-from multiprocessing import Queue as MQueue
+from multiprocessing import Queue as MQueue123
 from tabulate import tabulate
 import numpy as np
 import threading
