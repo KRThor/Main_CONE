@@ -1,6678 +1,4726 @@
-# [INFO] '24.02.29 Update
-
-# usb upload interface module
-from multiprocessing.sharedctypes import Value
-from stat import ST_CTIME
-from textwrap import fill
-from cv2 import line
-from Module.database import Database
-from Module.SCP import Transfer
-from Module.jsonParser import JASONparser
-from tqdm import tqdm
-import os
-os.environ["GIT_PYTHON_REFRESH"] = "quiet"
-import sys
-
-import configparser
-from os.path import isfile, join
-from collections import Counter
-from tkinter import END, messagebox
-from PIL import Image, ImageSequence, ImageTk
-import tkinter.font as tkFont
-from tkcalendar import Calendar
-from collections import deque
-from os.path import getsize
-# import keras.backend as K
-from queue import Queue
-from os import listdir
-from _thread import *
-import tkinter as tk
-from tkinter import ttk
+from multiprocessing import Queue as MQueue
+from tabulate import tabulate
 import numpy as np
 import threading
-from threading import Thread
-import datetime
-
-# import binascii
-import imutils
-import pymysql
-import pickle
-import serial
-import socket
-import copy
-import time
-import cv2
-import json
-
-# import re
-# import gc
 import traceback
-import logging
-import git
-import shutil
+import datetime
+import pickle
+import random
+import socket
+import time
+import uuid
+import json
+import glob
+import cv2
+import sys
+import os
+import re
 
-#modbus
-from pymodbus.client.sync import ModbusTcpClient
+from tkinter import END, messagebox
+from tkcalendar import Calendar
+from PIL import Image, ImageTk, ImageDraw, ImageFont
+import tkinter as tk
 
-from operator import index
-from tabnanny import check
-from openpyxl import load_workbook
-from openpyxl import Workbook
-from openpyxl.styles import Font
+# from pymodbus.client.sync import ModbusTcpClient  # 실제 적용시 사용
+from pymodbus.client import ModbusTcpClient  # 테스트용
 
-# import math as mt
-# import pygame
+from lib.config import get_line_config, create_result_dict, create_bool_dict
+from lib.email_sender import send_excel_report_with_context
+from lib.excel_report_generator import ExcelReportGenerator
+from lib.log import LogManager
+from lib.mysql import MySql
 
-# tf.disable_v2_behavior()
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-if not os.path.exists("log"):
-    os.makedirs("log")
-
-nowtime = datetime.datetime.now().strftime("%Y_%m_%d")
-
-file_handler = logging.FileHandler(f"log/log_{nowtime}.log")
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
-
-# config = tf.ConfigProto()
-# config.gpu_options.allow_growth = True
-# sess = tf.Session(config=config)
-
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# tf.config.experimental.set_memory_growth(gpus[0], True)
-# K.clear_session()
-
-root = tk.Tk()
-
-# Hyper parameter
-imwrite_switch = True
-txtwrite_switch = False
-
-# for test
-path = os.path.dirname(os.path.abspath(__file__)).split("\\") 
-my_folder = path[-1] # e.g. CONEMAIN_SS11
-print('[INFO] NOW PC NAME:', my_folder)
-
-if "CONEMAIN" in my_folder:
-    ConnectClientCheck = 6
-    MAINHOST = "192.168.0.110"
-    ModebusHostIp = '192.168.0.2'
-    ModebusHostPort = 502
-    LINE = my_folder.split('_')[1] # e.g. S11
-    CodeSetup = "CONE"
-    BgSetup = "bg_cone"
-else:
-    ConnectClientCheck = 5
-    MAINHOST = "192.168.0.100"
-    ModebusHostIp = '192.168.0.2'
-    ModebusHostPort = 502
-    LINE = my_folder.split('_')[1] # e.g. S11
-    CodeSetup = "CUP"
-    BgSetup = "bg_cup"
-
-print(f"[INFO] {LINE}, {CodeSetup}")
-try:
-    os.system("sudo ifmetric enp37s0 30000")
-except:
-    pass
-
-try:
-    os.system("sudo ifmetric enp34s0 100")
-except:
-    pass
-
-
+# ▶ 메인 프레임 클래스
 class MainFrame(tk.Frame):
-    # 변수 선언
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.master = master
-        self.main_frame_bad = [None] * 37
-        self.main_frame_img = ImageTk.PhotoImage(file=f"bg/{BgSetup}/bg.png")
-        self.main_frame_img2 = ImageTk.PhotoImage(file=f"bg/{BgSetup}/bg2.png")
-        self.main_frame_ok = ImageTk.PhotoImage(file=f"bg/{BgSetup}/OK.png")
-        self.main_frame_ng = ImageTk.PhotoImage(file=f"bg/{BgSetup}/NG.png")
-        self.main_frame_connecticon = ImageTk.PhotoImage(file=f"bg/{BgSetup}/connecticon.png")
-        self.main_frame_back = ImageTk.PhotoImage(file=f"bg/{BgSetup}/back.png")
-        self.main_frame_save = ImageTk.PhotoImage(file=f"bg/{BgSetup}/SAVE.png")
-        self.main_frame_ngsetting_btn = ImageTk.PhotoImage(file=f"bg/{BgSetup}/NGSETTING_btn.png")
-        self.main_frame_ngsetting_bg = ImageTk.PhotoImage(file=f"bg/{BgSetup}/NGSETTING_bg.png")
-        self.main_frame_CameraBlur_img = ImageTk.PhotoImage(file=f"bg/{BgSetup}/CameraBlur.png")
-        self.main_frame_adminPassword_img = ImageTk.PhotoImage(file=f"bg/{BgSetup}/admin_Password.png")
-
-        self.disk_error_pop = ImageTk.PhotoImage(file=f"bg/ING/disk_error.png") # OH
-
-        # for i in range(37):
-        #     print(i)
-        #     self.main_frame_bad[i] = ImageTk.PhotoImage(file = ff'bg/{BgSetup}/bad{i}.png')
-        self.main_frame_bad = ImageTk.PhotoImage(file=f"bg/{BgSetup}/badSection.png")
-        self.main_frame_listview = ImageTk.PhotoImage(file=f"bg/{BgSetup}/NgCheckListView_inner.png" if CodeSetup == "CONE" else f"bg/{BgSetup}/NgCheckListView_outer.png")
-        self.main_frame_modelloading = ImageTk.PhotoImage(file=f"bg/{BgSetup}/Loading.png")
-
-        # 초기 상태 표시 INI 가져오기
-        self.init_state_config = configparser.ConfigParser()
-        self.initstateINI = 'CountSave/State.INI'
-
-        if os.path.isfile(self.initstateINI) == False: 
-            self.init_state_config['STATE'] = {'index' : '0'}
-            self.init_state_config['BYPASS'] = {'bypass' : 'off'}
-            
-            # INI 파일 생성 
-            with open(self.initstateINI, 'w') as f:
-                self.init_state_config.write(f)
-
-        self.init_state_config.read('CountSave/State.INI', encoding='euc-kr')
-        self.state = self.init_state_config['STATE']['index']
-        print(f'▶ 현재 상태 : {self.state}')
-        
-        # 변수 선언
-        self.main_cam = [None] * 6
-        self.main_ok = [None] * 6
-        self.main_ng = [None] * 6
-        self.connectionCheck = [None] * 6
-        self.updateImage = [None] * 6
-        self.bad_image1 = [None] * 10
-        self.bad_image2 = [None] * 10
-        self.bad_text1 = [None] * 10
-        self.bad_text1_inputData = [None] * 10
-        self.bad_text2 = [None] * 10
-        self.bad_text2_inputData = [None] * 10
-        self.CameraBlur = [None] * 6
-
-        self.total_count = 0
-        self.ok_count = 0
-        self.ng_count = 0
-        self.capture_mode = self.setting_mode = self.view_mode = self.management_mode =  False
-        self.bypass_mode = False
-        self.ngCheckMode = False
-        self.ngSettingMode = False
-        self.NgCaptureCheck = False
-
-        #entry mode
-        self.PasswordMode = False  # 패스워드 화면이 켜져있는지 아닌지 확인하는 변수
-        self.PasswordCheck = False
-        self.Password = 'art105'
-        ####################################
-        self.test_mode = None
-        ####################################
-
-        self.mainbadCheckList = [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25] if CodeSetup == "CONE" else [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25]
-        self.mainbadCheckListboxData = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-        self.mainbadCheckListTotalcount = [0, 0, 0, 0, 0, 0] if CodeSetup == "CONE" else [0, 0, 0, 0, 0]
-
-        # window box
-        self.labelHeightNum = [None] * 6
-        self.scaleframe = [None] * 6
-        self.scaleframeShow = [None] * 6
-        self.framecanvas = [None] * 6
-        self.framecanvasScale = [None] * 6
-        self.filelistboxscrollbarH = [None] * 6
-        self.classLabel = [None] * 6
-        self.scaleBar = [None] * 6
-        self.scaleBar_count1 = [None] * 6
-        self.scaleBar_count2 = [None] * 6
-        self.framecanvasScaleShow = [None] * 6
-        
-        # ng 연속검출 세팅 인터페이스 필요 변수
-        self.ngSettingBg = [None] * 6
-        self.entryBox = [None] * 12
-        self.entryBoxView = [None] * 12
-        self.ngSettingList = [[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False]]
-        self.ngSettingList_backup = [[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False]]
-        self.ngSettingText = [None] * 6
-
-        # loading gif moduls
-        self.loadingFrame = []
-        im = Image.open(f"bg/{BgSetup}/loading_main.gif")
-        index = 0
-        for frame in ImageSequence.Iterator(im):
-            # np_frame = np.asarray(frame)
-            frame = frame.convert('RGBA')
-            frame = frame.resize((150, 150), Image.ANTIALIAS)
-            frame_tk = ImageTk.PhotoImage(frame)
-            
-            self.loadingFrame.append(frame_tk)
-            index += 1
-        self.loadingProcessTrigger = None
-
-        # 카메라 연결중 팝업 이미지
-        self.popup_image = [None] * 2
-        self.popup_image[0] = ImageTk.PhotoImage(file=f"bg/point_{CodeSetup}_1.png")
-        self.popup_image[1] = ImageTk.PhotoImage(file=f"bg/point_{CodeSetup}_2.png")
-
-        self.ng_check_click = False
-
-        # 화면 세팅
-        self.master.attributes("-fullscreen", True)
-        self.master.bind(
-            "<F11>", lambda event: self.master.attributes("-fullscreen", not self.master.attributes("-fullscreen")),
-        )
-        self.master.bind("<Escape>", lambda event: self.master.attributes("-fullscreen", False))
-        self.create_widgets()
-
-    def create_widgets(self):
-        self.grid(row=0, column=0)
-        self.main_canvas = tk.Canvas(self, width=1920, height=1080)
-        # image
-        # [topMain, topclient, sideclient1, sideclient2, sideclient3, sideclient4]
-        self.background_image = self.main_canvas.create_image(0, 0, image=self.main_frame_img, anchor="nw")
-        self.stateText = self.main_canvas.create_text(1122, 1008, text="상태 미설정", font=("gothic", 20, "bold"), fill="white", anchor="center",)
-        self.main_cam[0] = self.main_canvas.create_image(36, 548, image="", anchor="nw", state="normal")
-        self.main_cam[1] = self.main_canvas.create_image(36, 131, image="", anchor="nw", state="normal")
-        self.main_cam[2] = self.main_canvas.create_image(484, 131, image="", anchor="nw", state="normal")
-        if CodeSetup == "CONE":
-            self.main_cam[3] = self.main_canvas.create_image(932, 131, image="", anchor="nw", state="normal")
-            self.main_cam[4] = self.main_canvas.create_image(484, 548, image="", anchor="nw", state="normal")
-            self.main_cam[5] = self.main_canvas.create_image(932, 548, image="", anchor="nw", state="normal")
-        else:
-            self.main_cam[3] = self.main_canvas.create_image(484, 548, image="", anchor="nw", state="normal")
-            self.main_cam[4] = self.main_canvas.create_image(932, 548, image="", anchor="nw", state="normal")
-        self.main_ok[0] = self.main_canvas.create_image(31, 856, image=self.main_frame_ok, anchor="nw", state="hidden")
-        self.main_ok[1] = self.main_canvas.create_image(31, 438, image=self.main_frame_ok, anchor="nw", state="hidden")
-        self.main_ok[2] = self.main_canvas.create_image(479, 438, image=self.main_frame_ok, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.main_ok[3] = self.main_canvas.create_image(927, 438, image=self.main_frame_ok, anchor="nw", state="hidden")
-            self.main_ok[4] = self.main_canvas.create_image(479, 856, image=self.main_frame_ok, anchor="nw", state="hidden")
-            self.main_ok[5] = self.main_canvas.create_image(927, 856, image=self.main_frame_ok, anchor="nw", state="hidden")
-        else:
-            self.main_ok[3] = self.main_canvas.create_image(479, 856, image=self.main_frame_ok, anchor="nw", state="hidden")
-            self.main_ok[4] = self.main_canvas.create_image(927, 856, image=self.main_frame_ok, anchor="nw", state="hidden")
-        self.main_ng[0] = self.main_canvas.create_image(251, 856, image=self.main_frame_ng, anchor="nw", state="hidden")
-        self.main_ng[1] = self.main_canvas.create_image(251, 438, image=self.main_frame_ng, anchor="nw", state="hidden")
-        self.main_ng[2] = self.main_canvas.create_image(699, 438, image=self.main_frame_ng, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.main_ng[3] = self.main_canvas.create_image(1147, 438, image=self.main_frame_ng, anchor="nw", state="hidden")
-            self.main_ng[4] = self.main_canvas.create_image(699, 856, image=self.main_frame_ng, anchor="nw", state="hidden")
-            self.main_ng[5] = self.main_canvas.create_image(1147, 856, image=self.main_frame_ng, anchor="nw", state="hidden")
-        else:
-            self.main_ng[3] = self.main_canvas.create_image(699, 856, image=self.main_frame_ng, anchor="nw", state="hidden")
-            self.main_ng[4] = self.main_canvas.create_image(1147, 856, image=self.main_frame_ng, anchor="nw", state="hidden")
-            pass
-
-        self.CameraBlur[0] = self.main_canvas.create_image(31, 856, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-        self.CameraBlur[1] = self.main_canvas.create_image(31, 438, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-        self.CameraBlur[2] = self.main_canvas.create_image(479, 438, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.CameraBlur[3] = self.main_canvas.create_image(927, 438, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-            self.CameraBlur[4] = self.main_canvas.create_image(479, 856, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-            self.CameraBlur[5] = self.main_canvas.create_image(927, 856, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-        else:
-            self.CameraBlur[3] = self.main_canvas.create_image(479, 856, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-            self.CameraBlur[4] = self.main_canvas.create_image(927, 856, image=self.main_frame_CameraBlur_img, anchor="nw", state="hidden")
-        self.connectionCheck[0] = self.main_canvas.create_image(127, 74, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-        self.connectionCheck[1] = self.main_canvas.create_image(127, 30, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-        self.connectionCheck[2] = self.main_canvas.create_image(307, 30, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.connectionCheck[3] = self.main_canvas.create_image(487, 30, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-            self.connectionCheck[4] = self.main_canvas.create_image(307, 74, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-            self.connectionCheck[5] = self.main_canvas.create_image(487, 74, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-        else:
-            self.connectionCheck[3] = self.main_canvas.create_image(307, 74, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-            self.connectionCheck[4] = self.main_canvas.create_image(487, 74, image=self.main_frame_connecticon, anchor="nw", state="hidden")
-        self.back_image = self.main_canvas.create_image(1146, 973, image=self.main_frame_back, anchor="nw", state="hidden")
-        self.save_image = self.main_canvas.create_image(927, 973, image=self.main_frame_save, anchor="nw", state="hidden")
-        check = 0
-        for i in range(9, -1, -1):
-            self.bad_image1[i] = self.main_canvas.create_image(1376, 995 - check, image="", anchor="nw", state="normal")
-            self.bad_text1[i] = self.main_canvas.create_text(1498, 1020 - check, text="", font=("gothic", 18, "bold"), fill="white", anchor="center",)
-            check += 57
-        check = 0
-        for i in range(9, -1, -1):
-            self.bad_image2[i] = self.main_canvas.create_image(1636, 995 - check, image="", anchor="nw", state="normal")
-            self.bad_text2[i] = self.main_canvas.create_text(1755, 1021 - check, text="", font=("gothic", 18, "bold"), fill="white", anchor="center",)
-            check += 57
-
-        self.ngSettingBtn = self.main_canvas.create_image(479, 972, image=self.main_frame_ngsetting_btn, anchor="nw", state="hidden")
-        # self.ngSettingBg = self.main_canvas.create_image(1376, 424, image=self.main_frame_ngsetting_bg, anchor="nw", state="hidden")
-        self.ngSettingBg[0] = self.main_canvas.create_image(31, 543, image=self.main_frame_ngsetting_bg, anchor = "nw", state = "hidden")
-        self.ngSettingBg[1] = self.main_canvas.create_image(31, 125, image=self.main_frame_ngsetting_bg, anchor = "nw", state = "hidden")
-        self.ngSettingBg[2] = self.main_canvas.create_image(479, 125, image=self.main_frame_ngsetting_bg, anchor = "nw", state = "hidden")
-        self.ngSettingBg[3] = self.main_canvas.create_image(927, 125, image=self.main_frame_ngsetting_bg, anchor = "nw", state = "hidden")
-        self.ngSettingBg[4] = self.main_canvas.create_image(479, 543, image=self.main_frame_ngsetting_bg, anchor = "nw", state = "hidden")
-        if CodeSetup == "CONE":
-            self.ngSettingBg[5] = self.main_canvas.create_image(927, 543, image=self.main_frame_ngsetting_bg, anchor = "nw", state = "hidden")
-
-        # 팝업창 OH
-        self.show_pop = self.main_canvas.create_image(678, 972, image='', anchor="nw", state="hidden")
-
-        # 팝업창
-        self.popup_place = self.main_canvas.create_image(23, 23, anchor="nw", state="hidden")
-
-        def _from_rgb(rgb):
-            """translates an rgb tuple of int to a tkinter friendly color code
-            """
-            r, g, b = rgb
-            return f'#{r:02x}{g:02x}{b:02x}'
-
-        self.entryBox[0] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white',width=15, justify='center')
-        self.entryBoxView[0] = self.main_canvas.create_window(95, 647, anchor='nw', window='')
-        self.entryBox[1] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[1] = self.main_canvas.create_window(95, 763, anchor='nw', window='')
-        self.entryBox[2] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[2] = self.main_canvas.create_window(95, 229, anchor='nw', window='')
-        self.entryBox[3] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[3] = self.main_canvas.create_window(95, 345, anchor='nw', window='')
-        self.entryBox[4] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[4] = self.main_canvas.create_window(543, 229, anchor='nw', window='')
-        self.entryBox[5] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[5] = self.main_canvas.create_window(543, 345, anchor='nw', window='')
-        self.entryBox[6] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[6] = self.main_canvas.create_window(991, 229, anchor='nw', window='')
-        self.entryBox[7] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[7] = self.main_canvas.create_window(991, 345, anchor='nw', window='')
-        self.entryBox[8] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[8] = self.main_canvas.create_window(543, 647, anchor='nw', window='')
-        self.entryBox[9] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-        self.entryBoxView[9] = self.main_canvas.create_window(543, 763, anchor='nw', window='')
-        if CodeSetup == "CONE":
-            self.entryBox[10] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-            self.entryBoxView[10] = self.main_canvas.create_window(991, 647, anchor='nw', window='')
-            self.entryBox[11] = tk.Entry(self, bg = _from_rgb((47,78,108)), font=(None, 25, 'bold'), fg='white', width=15, justify='center')
-            self.entryBoxView[11] = self.main_canvas.create_window(991, 763, anchor='nw', window='')
-
-        self.ngCheckListView = self.main_canvas.create_image(30, 124, image=self.main_frame_listview, anchor="nw", state="hidden")
-
-        # text
-        self.totalText = self.main_canvas.create_text(1628, 272, text=self.total_count, font=("gothic", 20, "bold"), fill="white", anchor="center",)
-        self.okText = self.main_canvas.create_text(1498, 379, text=self.ok_count, font=("gothic", 20, "bold"), fill="white", anchor="center",)
-        self.ngText = self.main_canvas.create_text(1757, 379, text=self.ng_count, font=("gothic", 20, "bold"), fill="white", anchor="center",)
-        self.productName = self.main_canvas.create_text(1624, 154, text="None Select Product", font=("gothic", 20, "bold"), fill="white", anchor="center",)
-
-        self.ngSettingText[0] = self.main_canvas.create_text(233, 897, text="비활성화", font=("gothic", 25, "bold"), fill="white", anchor="center", state = 'hidden')
-        self.ngSettingText[1] = self.main_canvas.create_text(233, 479, text="비활성화", font=("gothic", 25, "bold"), fill="white", anchor="center", state = 'hidden')
-        self.ngSettingText[2] = self.main_canvas.create_text(685, 479, text="비활성화", font=("gothic", 25, "bold"), fill="white", anchor="center", state = 'hidden')
-        self.ngSettingText[3] = self.main_canvas.create_text(1130, 479, text="비활성화", font=("gothic", 25, "bold"), fill="white", anchor="center", state = 'hidden')
-        self.ngSettingText[4] = self.main_canvas.create_text(685, 897, text="비활성화", font=("gothic", 25, "bold"), fill="white", anchor="center", state = 'hidden')
-        self.ngSettingText[5] = self.main_canvas.create_text(1130, 897, text="비활성화", font=("gothic", 25, "bold"), fill="white", anchor="center", state = 'hidden')
-
-        # GPU 텍스트 2022-12-09 OH
-        self.gputext1 = self.main_canvas.create_text(363, 152, text = "GPU check", font=("gothic", 15, "bold"), fill='red', anchor='center', state='hidden')
-        self.gputext2 = self.main_canvas.create_text(811, 152, text = "GPU check", font=("gothic", 15, "bold"), fill='red', anchor='center', state='hidden')
-        self.gputext3 = self.main_canvas.create_text(1259, 152, text = "GPU check", font=("gothic", 15, "bold"), fill='red', anchor='center', state='hidden')
-        self.gputext4 = self.main_canvas.create_text(363, 567, text = "GPU check", font=("gothic", 15, "bold"), fill='red', anchor='center', state='hidden')
-        self.gputext5 = self.main_canvas.create_text(811, 567, text = "GPU check", font=("gothic", 15, "bold"), fill='red', anchor='center', state='hidden')
-        self.gputext6 = self.main_canvas.create_text(1259, 567, text = "GPU check", font=("gothic", 15, "bold"), fill='red', anchor='center', state='hidden')
-
-        # listbox
-        color = "#%02x%02X%02x" % (19, 47, 60)
-        self.mainframe_log = tk.Listbox(self.main_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-        self.mainframe_log.place(x=2000, y=2000, width=428, height=539)
-        self.mainframe_scrollbar = tk.Scrollbar(self.main_canvas, bg=color, orient="vertical")
-        self.mainframe_scrollbar.config(command=self.mainframe_log.yview)
-        self.mainframe_scrollbar.place(x=2000, y=2000, width=20, height=539)
-        self.mainframe_log.config(yscrollcommand=self.mainframe_scrollbar.set)
-
-        self.resultNgViewListbox_main = tk.Listbox(self.main_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-        self.resultNgViewListbox_main.place(x=2000, y=2000, width=366, height=343)
-        self.resultNgViewListbox_main_scrollbar = tk.Scrollbar(self.main_canvas, bg=color, orient="vertical")
-        self.resultNgViewListbox_main_scrollbar.config(command=self.resultNgViewListbox_main.yview)
-        self.resultNgViewListbox_main_scrollbar.place(x=2000, y=2000, width=20, height=343)
-
-        self.resultNgViewListbox_topclient = tk.Listbox(self.main_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-        self.resultNgViewListbox_topclient.place(x=2000, y=2000, width=366, height=343)
-        self.resultNgViewListbox_topclient_scrollbar = tk.Scrollbar(self.main_canvas, bg=color, orient="vertical")
-        self.resultNgViewListbox_topclient_scrollbar.config(command=self.resultNgViewListbox_topclient.yview)
-        self.resultNgViewListbox_topclient_scrollbar.place(x=2000, y=2000, width=20, height=343)
-
-        self.resultNgViewListbox_sideclient1 = tk.Listbox(self.main_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-        self.resultNgViewListbox_sideclient1.place(x=2000, y=2000, width=366, height=343)
-        self.resultNgViewListbox_sideclient1_scrollbar = tk.Scrollbar(self.main_canvas, bg=color, orient="vertical")
-        self.resultNgViewListbox_sideclient1_scrollbar.config(command=self.resultNgViewListbox_sideclient1.yview)
-        self.resultNgViewListbox_sideclient1_scrollbar.place(x=2000, y=2000, width=20, height=343)
-
-        self.resultNgViewListbox_sideclient2 = tk.Listbox(self.main_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-        self.resultNgViewListbox_sideclient2.place(x=2000, y=2000, width=366, height=343)
-        self.resultNgViewListbox_sideclient2_scrollbar = tk.Scrollbar(self.main_canvas, bg=color, orient="vertical")
-        self.resultNgViewListbox_sideclient2_scrollbar.config(command=self.resultNgViewListbox_sideclient2.yview)
-        self.resultNgViewListbox_sideclient2_scrollbar.place(x=2000, y=2000, width=20, height=343)
-
-        self.resultNgViewListbox_sideclient3 = tk.Listbox(self.main_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-        self.resultNgViewListbox_sideclient3.place(x=2000, y=2000, width=366, height=343)
-        self.resultNgViewListbox_sideclient3_scrollbar = tk.Scrollbar(self.main_canvas, bg=color, orient="vertical")
-        self.resultNgViewListbox_sideclient3_scrollbar.config(command=self.resultNgViewListbox_sideclient3.yview)
-        self.resultNgViewListbox_sideclient3_scrollbar.place(x=2000, y=2000, width=20, height=343)
-
-        if CodeSetup == "CONE":
-            self.resultNgViewListbox_sideclient4 = tk.Listbox(self.main_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-            self.resultNgViewListbox_sideclient4.place(x=2000, y=2000, width=366, height=343)
-            self.resultNgViewListbox_sideclient4_scrollbar = tk.Scrollbar(self.main_canvas, bg=color, orient="vertical")
-            self.resultNgViewListbox_sideclient4_scrollbar.config(command=self.resultNgViewListbox_sideclient4.yview)
-            self.resultNgViewListbox_sideclient4_scrollbar.place(x=2000, y=2000, width=20, height=343)
-        else:
-            pass
-
-        def _from_rgb(rgb):
-            """translates an rgb tuple of int to a tkinter friendly color code
-            """
-            r, g, b = rgb
-            return f'#{r:02x}{g:02x}{b:02x}'
-
-        self.AdminPasswordBg = self.main_canvas.create_image(960, 540, image = self.main_frame_adminPassword_img, anchor = 'center', state = 'hidden')
-        self.entry = tk.Entry(self, bg = _from_rgb((44,116,132)), font=(None, 25, 'bold'), width=19, justify='center', show = "*")
-        self.showEntry = self.main_canvas.create_window(786, 509, anchor='nw', window='')
-
-        self.modelloadingView = self.main_canvas.create_image(960,600, image = self.main_frame_modelloading, anchor = 'center', state = 'hidden')
-        self.loadingGifImage = self.main_canvas.create_image(960,700, image = '', anchor = 'center', state = 'hidden')
-        
-        # 상태 표시 초기 설정
-        self.updatestate(self.state)
-
-        # event
-        self.entry.bind("<Return>", self.main_password_check)
-        self.main_canvas.bind("<Button-1>", self.main_btn)
-        self.main_canvas.pack()
-
-    def loadingProcessGIF(self):
-        while True:
-            for i in range(len(self.loadingFrame)):
-                # print('test')
-                self.main_canvas.itemconfig(self.loadingGifImage, image=self.loadingFrame[i], state = 'normal')
-                time.sleep(0.1)
-                if self.loadingProcessTrigger == False:
-                    print('complete')
-                    self.loadingProcessTrigger = True
-                    self.main_canvas.itemconfig(self.loadingGifImage, image='', state = 'hidden')
-                    return
-
-    def main_password_check(self, event):
-        readPassword = tk.Entry.get(self.entry)
-        if readPassword == self.Password:
-            self.main_canvas.itemconfig(self.stateText, state = 'hidden')
-            self.main_canvas.itemconfig(self.AdminPasswordBg, state = 'hidden')
-            self.main_canvas.itemconfig(self.showEntry, window = '')
-            self.entry.delete(0,999)
-            self.PasswordCheck = True
-            self.PasswordMode = False
-            print('password Check')
-
-            if self.ngSettingMode == None:
-                print("NG SETTINGS Btn Click")
-                self.ngSettingLoad("setting")
-                self.main_canvas.itemconfig(self.ngSettingBtn, state="normal")
-                for i in range(ConnectClientCheck):
-                    self.main_canvas.itemconfig(self.ngSettingBg[i], state="normal")
-                for i in range(ConnectClientCheck*2):
-                    self.main_canvas.itemconfig(self.entryBoxView[i], window = self.entryBox[i])
-                self.main_canvas.itemconfig(self.back_image, state="normal")
-                self.main_canvas.itemconfig(self.save_image, state="normal")
-                self.ngSettingMode = True
-            if self.setting_mode == None:
-                print("SETTING MODE")
-                # if self.setting_mode == False:
-                self.setting_mode = True
-
-                if self.setting_mode == True:
-                    # DTT.pickleListData[0] = copy.deepcopy(EFFI.ModelSetupList)
-                    # self.makeLabelWindow(36, 548, DTT.pickleListData[0], 0)
-                    TSD.sendAllClient("SETTING")
-                    self.main_canvas.itemconfig(self.back_image, state="normal")
-                    self.main_canvas.itemconfig(self.save_image, state="normal")
-            if self.management_mode == None:
-                self.management_mode = True
-                management_frame.tkraise()
-        else:
-            messagebox.showerror("에러발생", "정확한 패스워드를 기입하여 주세요.")
-            self.entry.delete(0,999)
-
-    def ngSettingSave(self):
-        self.ngSettingEntryLoad()
-        WriteData = self.ngSettingList_backup.copy()
-        self.ngSettingList = self.ngSettingList_backup.copy()
-        STH.ngContinuousCount = 0
-        STH.ngContinuousList = [0,0,0,0,0,0]
-        try:
-            try:
-                if not (os.path.isdir("NGsetting")):
-                    os.makedirs(os.path.join("NGsetting"))
-            except:
-                pass
-
-            with open("NGsetting/NGsettingCount.pickle", "wb") as file:
-                pickle.dump(WriteData, file)
-
-            for i in range(6):
-                if i == 5 and CodeSetup == 'CUP':
-                    break
-                self.main_canvas.itemconfig(self.ngSettingText[i], state="hidden")
-            main_frame.main_canvas.itemconfig(main_frame.ngSettingBtn, state="hidden")
-            for i in range(ConnectClientCheck):
-                self.main_canvas.itemconfig(self.ngSettingBg[i], state="hidden")
-            for i in range(ConnectClientCheck*2):
-                self.main_canvas.itemconfig(self.entryBoxView[i], window = '')
-            self.main_canvas.itemconfig(self.back_image, state="hidden")
-            self.main_canvas.itemconfig(self.save_image, state="hidden")
-
-            print(f'Saveing Data - {WriteData}')
-        except Exception as ex:
-            logger.info(f"Warning : NGsetting 피클파일 저장 에러 - {ex} \n {traceback.format_exc()}")
-
-    def ngSettingLoad(self, Mode):
-        try:
-            # self.vision_value = []
-            try:
-                with open("NGsetting/NGsettingCount.pickle", "rb") as file:
-                    data = pickle.load(file)
-
-                self.ngSettingList_backup = data.copy()
-                self.ngSettingList = data.copy()
-            except:
-                pass
-            if Mode == "load":
-                pass
-            else:
-                print(f'Read Data - {self.ngSettingList}')
-                for i in range(6):
-                    if i == 5 and CodeSetup == 'CUP':
-                        break
-                    main_frame.main_canvas.itemconfig(main_frame.ngSettingText[i], text="활성화" if self.ngSettingList_backup[i][2] else "비활성화", state="normal")
-                    self.ngSettingInterfaceUpdate(i)
-                self.main_canvas.itemconfig(self.back_image, state="normal")
-                self.main_canvas.itemconfig(self.save_image, state="normal")
-
-            print("피클 파일 로딩 완료")
-        except:
-            logger.info(f"NGsetting 피클파일이 존재하지 않습니다. {traceback.format_exc()}")
-            print("피클파일이 존재하지 않습니다.")
-            self.ngSettingSave()
-            logger.info(f"NGsetting 피클파일을 Default로 생성합니다. {traceback.format_exc()}")
-            print("피클파일을 Default로 생성합니다.")
-
-    def ngSettingEntryLoad(self):
-        for i in range(6 if CodeSetup == 'CONE' else 5):
-            IdleData = tk.Entry.get(self.entryBox[(i*2)])
-            self.ngSettingList_backup[i][0] = IdleData
-            IdleData = tk.Entry.get(self.entryBox[(i*2)+1])
-            self.ngSettingList_backup[i][1] = IdleData
-            pass
-
-    def ngSettingInterfaceUpdate(self, Index):
-        self.entryBox[(Index*2)].delete(0,999)
-        self.entryBox[(Index*2)+1].delete(0,999)
-        self.entryBox[(Index*2)].insert(0, self.ngSettingList[Index][0])
-        self.entryBox[(Index*2)+1].insert(0, self.ngSettingList[Index][1])
-
-    def visionNgViewUpdate(self):
-        self.mainbadCheckListboxData = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-        self.mainbadCheckListTotalcount = [0, 0, 0, 0, 0, 0] if CodeSetup == "CONE" else [0, 0, 0, 0, 0]
-
-        self.resultNgViewListbox_main.delete(0, "end")
-        self.resultNgViewListbox_topclient.delete(0, "end")
-        self.resultNgViewListbox_sideclient1.delete(0, "end")
-        self.resultNgViewListbox_sideclient2.delete(0, "end")
-        self.resultNgViewListbox_sideclient3.delete(0, "end")
-        if CodeSetup == "CONE":
-            self.resultNgViewListbox_sideclient4.delete(0, "end")
-        else:
-            pass
-        # self.mainbadCheckList = [[72, 0, 0, 4, 0, 62, 0, 0, 31, 0, 6, 0, 0, 0, 88, 0, 0, 15, 0, 14, 0, 0, 0, 19, 0], [32, 13, 0, 0, 0, 177, 0, 52, 112, 0, 73, 0, 0, 0, 11, 0, 0, 23, 42, 15, 0, 68, 16, 0, 0], [823, 0, 13, 15, 0, 1, 62, 0, 73, 0, 13, 0, 0, 83, 11, 152, 0, 0, 72, 42, 11, 0, 0, 42, 0], [72, 19, 18, 84, 11, 16, 62, 2, 88, 3, 2, 1, 88, 2, 21, 15, 9, 3, 1, 1, 3, 6, 36, 13, 20], [0, 0, 2, 0, 0, 9, 0, 0, 7, 0, 10, 0, 0, 0, 2, 0, 0, 8, 0, 4, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
-
-        for i in range(6 if CodeSetup == "CONE" else 5):
-            for x in range(len(DTT.badType.keys())):
-                self.mainbadCheckListTotalcount[i] += self.mainbadCheckList[i][x]
-        print(f'[Check] mainbadCheckListTotalcount - {self.mainbadCheckListTotalcount}')
-        # main data trim
-        try:
-            for i in range(6 if CodeSetup == "CONE" else 5):
-                updateCount = 0
-                for x in range(len(DTT.badType.keys())):
-                    try:
-                        if self.mainbadCheckList[i][x] > 0:
-                            print(f'{DTT.badType[x]} : {self.mainbadCheckList[i][x]}개 불량확인')
-                            updateCount += 1
-                            updateCountText = str(updateCount) + ". "
-                            updateText = f"{updateCountText}{DTT.badType[x]} : {self.mainbadCheckList[i][x]}개 불량확인"
-                            self.mainbadCheckListboxData[i].append(updateText)
-                        else:
-                            pass
-                    except:
-                        print(f'{x+1}. DUMMY : {self.mainbadCheckList[i][x]}개 불량확인')
-                        pass
-        except:
-            print("trim Error : ", traceback.format_exc())
-        print(f'[Check] mainbadCheckListboxData - {self.mainbadCheckListboxData}')
-        try:
-            for i in range(6):
-                for x in reversed(range(len(self.mainbadCheckListboxData[i]))):
-                    if i == 0:
-                        # main update
-                        self.resultNgViewListbox_main.insert(0, (self.mainbadCheckListboxData[i][x]))
-                    elif i == 1:
-                        # top client update
-                        self.resultNgViewListbox_topclient.insert(0, (self.mainbadCheckListboxData[i][x]))
-                    elif i == 2:
-                        # side client1 update
-                        self.resultNgViewListbox_sideclient1.insert(0, (self.mainbadCheckListboxData[i][x]))
-                    elif i == 3:
-                        # side client2 update
-                        self.resultNgViewListbox_sideclient2.insert(0, (self.mainbadCheckListboxData[i][x]))
-                    elif i == 4:
-                        # side client3 update
-                        self.resultNgViewListbox_sideclient3.insert(0, (self.mainbadCheckListboxData[i][x]))
-                    elif i == 5:
-                        # side client3 update
-                        self.resultNgViewListbox_sideclient4.insert(0, (self.mainbadCheckListboxData[i][x]))
-                if i == 0:
-                    # main update
-                    self.resultNgViewListbox_main.insert(0, ("total Count : " + str(self.mainbadCheckListTotalcount[i])))
-                elif i == 1:
-                    # top client update
-                    self.resultNgViewListbox_topclient.insert(0, ("total Count : " + str(self.mainbadCheckListTotalcount[i])))
-                elif i == 2:
-                    # side client1 update
-                    self.resultNgViewListbox_sideclient1.insert(0, ("total Count : " + str(self.mainbadCheckListTotalcount[i])))
-                elif i == 3:
-                    # side client2 update
-                    self.resultNgViewListbox_sideclient2.insert(0, ("total Count : " + str(self.mainbadCheckListTotalcount[i])))
-                elif i == 4:
-                    # side client3 update
-                    self.resultNgViewListbox_sideclient3.insert(0, ("total Count : " + str(self.mainbadCheckListTotalcount[i])))
-                elif i == 5:
-                    # side client3 update
-                    self.resultNgViewListbox_sideclient4.insert(0, ("total Count : " + str(self.mainbadCheckListTotalcount[i])))
-        except:
-            print("update Error : ", traceback.format_exc())
-
-    def show_img(self, image, number):
-        try:
-            image = cv2.resize(image, dsize=(391, 290), interpolation=cv2.INTER_AREA)
-        except:
-            img = cv2.imread(f"bg/{BgSetup}/NoneData.png")
-            image = cv2.resize(img, dsize=(391, 290), interpolation=cv2.INTER_AREA)
-
-        self.cvtimg = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
-        self.cvtshow = Image.fromarray(self.cvtimg)
-        self.updateImage[number] = ImageTk.PhotoImage(image=self.cvtshow)
-        self.main_canvas.itemconfig(self.main_cam[number], image=self.updateImage[number])
-
-    def update_signal(self, message):
-        self.now = datetime.datetime.now()
-        signalTime = self.now.strftime("[%H:%M:%S] ")
-        message = signalTime + str(message)
-        self.mainframe_log.insert(0, message)
-
-    def makeLabelWindow(self, x, y, dictValue, number):
-        print("setting start : ", number)
-
-        if dictValue is not None:
-            self.labelHeightNum[number] = int(len(dictValue)) * 250
-
-            self.scaleframe[number] = tk.Frame(self.main_canvas)
-            self.scaleframeShow[number] = self.main_canvas.create_window(x, y, anchor="nw", window=self.scaleframe[number], width=389, height=289, state="normal",)
-
-            self.framecanvas[number] = tk.Canvas(self.scaleframe[number], width=439, height=self.labelHeightNum[number])
-
-            self.framecanvasScale[number] = tk.Frame(self.framecanvas[number], width=439, height=self.labelHeightNum[number])
-            self.filelistboxscrollbarH[number] = tk.Scrollbar(self.scaleframe[number], orient="vertical", command=self.framecanvas[number].yview)
-            self.filelistboxscrollbarH[number].pack(side="right", fill="y")
-
-            self.classLabel[number] = list(range(len(dictValue)))
-            self.scaleBar[number] = list(range(len(dictValue)))
-            self.scaleBar_count1[number] = list(range(len(dictValue)))
-            self.scaleBar_count2[number] = list(range(len(dictValue)))
-
-            fontStyle = tkFont.Font(family="gothic", size=10)
-
-            check = len(dictValue)
-            for num, (LableName, LabelValue) in enumerate(dictValue):
-                if num == check - 1:
-                    print(LableName, "///", LabelValue[0])
-                    LableName = str(num + 1) + ". " + LableName
-                    LabelName2 = "[COUNT(총)]"
-
-                    self.classLabel[number][num] = tk.Label(self.framecanvasScale[number], text=LableName, font=fontStyle)
-                    self.classLabel[number][num].pack()
-                    self.classLabel[number][num] = tk.Label(self.framecanvasScale[number], text=LabelName2, font=fontStyle)
-                    self.classLabel[number][num].pack()
-
-                    # label size x, y
-                    self.scaleBar_count1[number][num] = tk.Scale(self.framecanvasScale[number], from_=0, to=20, orient=tk.HORIZONTAL, length=339, resolution=1, command=lambda v, n=num, n2=number, n3=0: self.editParam(v, n, n2, n3),)
-                    self.scaleBar_count1[number][num].set(int(LabelValue[0]))
-                    self.scaleBar_count1[number][num].pack(padx=5)
-
-                else:
-                    print(LableName, "///", LabelValue[0], "///", LabelValue[1], "///", LabelValue[2])
-                    LableName = str(num + 1) + ". " + LableName
-                    LabelName2 = "[SCORE(검증값) / COUNT1(연속) / COUNT2(총)]"
-
-                    self.classLabel[number][num] = tk.Label(self.framecanvasScale[number], text=LableName, font=fontStyle)
-                    self.classLabel[number][num].pack()
-                    self.classLabel[number][num] = tk.Label(self.framecanvasScale[number], text=LabelName2, font=fontStyle)
-                    self.classLabel[number][num].pack()
-                    self.scaleBar[number][num] = tk.Scale(self.framecanvasScale[number], from_=0, to=100, orient=tk.HORIZONTAL, length=339, resolution=1, command=lambda v, n=num, n2=number, n3=0: self.editParam(v, n, n2, n3),)
-                    self.scaleBar[number][num].set(int(LabelValue[0]))
-                    self.scaleBar[number][num].pack(padx=5)
-
-                    # label size x, y
-                    self.scaleBar_count1[number][num] = tk.Scale(self.framecanvasScale[number], from_=0, to=20, orient=tk.HORIZONTAL, length=339, resolution=1, command=lambda v, n=num, n2=number, n3=1: self.editParam(v, n, n2, n3),)
-                    self.scaleBar_count1[number][num].set(int(LabelValue[1]))
-                    self.scaleBar_count1[number][num].pack(padx=5)
-                    self.scaleBar_count2[number][num] = tk.Scale(self.framecanvasScale[number], from_=0, to=20, orient=tk.HORIZONTAL, length=339, resolution=1, command=lambda v, n=num, n2=number, n3=2: self.editParam(v, n, n2, n3),)
-                    self.scaleBar_count2[number][num].set(int(LabelValue[2]))
-                    self.scaleBar_count2[number][num].pack(padx=5)
-
-            # self.framecanvas.configure(xscrollcommand=self.filelistboxscrollbarW.set)
-            self.framecanvas[number].configure(background="white", yscrollcommand=self.filelistboxscrollbarH[number].set)
-            self.framecanvas[number].config(scrollregion=(0, 0, 0, self.labelHeightNum[number]))
-            self.framecanvasScaleShow[number] = self.framecanvas[number].create_window(0, 0, anchor="nw", window=self.framecanvasScale[number], width=389, height=self.labelHeightNum[number],)
-
-            self.framecanvas[number].pack()
-        else:
-            messagebox.showerror("에러발생", "정상적인 접근방법이 아닙니다.")
-
-    def updatestate(self, state):
-        if state == '0':
-            self.main_canvas.itemconfig(self.stateText, text='상태 미설정')
-        elif state == '1' :
-            self.main_canvas.itemconfig(self.stateText, text='비전 검사 적용 완료')
-        elif state == '2' :
-            self.main_canvas.itemconfig(self.stateText, text='비전 검사 미적용')
-        elif state == '3' :
-            self.main_canvas.itemconfig(self.stateText, text='유효성 평가 대상')
-
-    def editParam(self, value, number, index, check):
-        DTT.pickleListData[index][number][1][check] = int(value)
-
-    def saveLabelParam(self):
-        filepath = f"models/{STH.nowModel}"
-
-        try:
-            if not (os.path.isdir(filepath)):
-                os.makedirs(os.path.join(filepath))
-        except:
-            pass
-
-        with open("{}/InsValue.pickle".format(filepath), "wb") as file:
-            pickle.dump(DTT.pickleListData[0], file)
-
-        print("피클파일 저장 완료 : ", filepath)
-
-        # self.settingSavePickle()
-
-        # self.scaleframe[].destroy()
-
-    def OneCycleTest(self):
-        try:
-            #Start Signal Check
-            print(f'[Signal] Modbus Inspection Start Signal Recv_Menual')
-            logger.info(f'[Signal] Modbus Inspection Start Signal Recv_Menual')
-
-            STH.StartMode = "11"
-            print(f"Start Mode - {STH.StartMode}")
-            logger.info(f"[SIGNAL Check] StartMode - {STH.StartMode} _ Menual")
-
-            DTT.AllDataRecv = 0
-            DTT.AllImageRecv = 0
-
-            STH.startTime = time.time()
-
-            print("[INFO] START 수신 : ", time.time() - STH.startTime)
-
-            TSD.sendAllClient("START")
-
-            DTT.inspectionSession = True
-            print("[INFO] Start 시그널 처리 완료 : ", time.time() - STH.startTime)
-            # STH.SendDataTrim("W", "D3003", "0")
-            STH.ModbusSignalSend(Mode = "READY", Value = 0)
-            STH.ModbusSignalSend(Mode = "BUSY", Value = 1)
-            STH.ModbusSignalSend(Mode = "STATE", Value = 1)
-
-            time.sleep(1)
-
-            #ResultRequest Signal Check
-            print('[Signal] Modbus ResultRequest ON Signal recv_Menual')
-            logger.info('[Signal] Modbus ResultRequest ON Signal recv_Menual')
-            main_frame.update_signal("Result Requast recv")
-            TSD.sendAllClient("RESULTREQUEST")
-            STH.ModbusSignalSend(Mode = "RESULTSESSION", Value = 1)
-            print("[INFO] RESULTREQUEST 송신 : ", time.time() - STH.startTime)
-
-            time.sleep(6)
-
-            #Ins Result PLC Check Complete Signal Check
-            print('[Signal] Modbus PLC Complete ON Signal recv_Menual')
-            logger.info('[Signal] Modbus PLC Complete ON Signal recv_Menual')
-            STH.ModbusSignalSend(Mode = "READY", Value = 1)
-            STH.ModbusSignalSend(Mode = "BUSY", Value = 0)
-            STH.ModbusSignalSend(Mode = "RESULTSESSION", Value = 0)
-            STH.ModbusSignalSend(Mode = "RESULT1", Value = 0)
-            STH.ModbusSignalSend(Mode = "RESULT2", Value = 0)
-            STH.ModbusSignalSend(Mode = "STATE", Value = 0)
-            # STH.SendDataTrim("W", "D3006", "0")
-            # STH.SendDataTrim("W", "D3007", "0")
-            # STH.SendDataTrim("W", "D3003", "1")
-        except:
-            print(traceback.format_exc())
-
-    def main_btn(self, event):
-        # sessionCheck = False
-        x = event.x
-        y = event.y
-        print(x, y)
-
-        if self.PasswordMode == False:
-            # if x < 100 and y > 900:
-            #     STH.SendDataTrim("W", "D3003", "0")
-
-            # NG SETTINGS 클릭
-            if 479 < x < 479 + 180 and 972 < y < 972 + 73 and self.ngSettingMode == False:
-                self.ngSettingMode = None
-                self.main_canvas.itemconfig(self.AdminPasswordBg, state = 'normal')
-                self.main_canvas.itemconfig(self.showEntry, window = self.entry)
-                self.PasswordMode = True
-                
-            if self.ngSettingMode == True:
-                #기능 사용 유무
-                if 89 < x < 374 and 461 < y < 508:
-                    # self.ngSettingList_backup = [[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False]]
-                    self.ngSettingList_backup[1][2] = not self.ngSettingList_backup[1][2]
-                    self.main_canvas.itemconfig(self.ngSettingText[1], text = '활성화' if self.ngSettingList_backup[1][2] == True else '비활성화')
-
-                if 537 < x < 823 and 461 < y < 509:
-                    self.ngSettingList_backup[2][2] = not self.ngSettingList_backup[2][2]
-                    self.main_canvas.itemconfig(self.ngSettingText[2], text = '활성화' if self.ngSettingList_backup[2][2] == True else '비활성화')
-
-                if 985 < x < 1271 and 461 < y < 509:
-                    self.ngSettingList_backup[3][2] = not self.ngSettingList_backup[3][2]
-                    self.main_canvas.itemconfig(self.ngSettingText[3], text = '활성화' if self.ngSettingList_backup[3][2] == True else '비활성화')
-
-                if 90 < x < 375 and 880 < y < 927:
-                    self.ngSettingList_backup[0][2] = not self.ngSettingList_backup[0][2]
-                    self.main_canvas.itemconfig(self.ngSettingText[0], text = '활성화' if self.ngSettingList_backup[0][2] == True else '비활성화')
-
-                if 537 < x < 822 and 880 < y < 927:
-                    self.ngSettingList_backup[4][2] = not self.ngSettingList_backup[4][2]
-                    self.main_canvas.itemconfig(self.ngSettingText[4], text = '활성화' if self.ngSettingList_backup[4][2] == True else '비활성화')
-
-                if CodeSetup == 'CONE':
-                    if 985 < x < 1271 and 880 < y < 927:
-                        self.ngSettingList_backup[5][2] = not self.ngSettingList_backup[5][2]
-                        self.main_canvas.itemconfig(self.ngSettingText[5], text = '활성화' if self.ngSettingList_backup[5][2] == True else '비활성화')
-
-                # SAVE 클릭
-                if 928 < x < 1108 and 973 < y < 1046:
-                    print("ngsetting 최종 저장")
-                    self.ngSettingSave()
-                    self.main_canvas.itemconfig(self.stateText, state = 'normal')
-                    DTT.NgContinuityCheck = [[] for _ in range(main_frame.ngSettingText[0])]
-                    self.ngSettingMode = False
-
-                # BACK 클릭
-                if 1147 < x < 1328 and 973 < y < 1046:
-                    print("ngsetting 저장하지 않고 나가기")
-                    self.main_canvas.itemconfig(self.stateText, state = 'normal')
-                    self.ngSettingMode = False
-                    self.ngSettingList_backup = [[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False],[20, 10, False]]
-                    for i in range(6):
-                        if i == 5 and CodeSetup == 'CUP':
-                            break
-                        self.main_canvas.itemconfig(self.ngSettingText[i], state="hidden")
-
-                    main_frame.main_canvas.itemconfig(main_frame.ngSettingBtn, state="hidden")
-                    for i in range(ConnectClientCheck):
-                        self.main_canvas.itemconfig(self.ngSettingBg[i], state="hidden")
-                    for i in range(ConnectClientCheck*2):
-                        self.main_canvas.itemconfig(self.entryBoxView[i], window = '')
-                    self.main_canvas.itemconfig(self.back_image, state="hidden")
-                    self.main_canvas.itemconfig(self.save_image, state="hidden")
-            
-            # NG 클릭 시 NG 카운트 정보 출력되는 이벤트
-            if 1636 < x < 1636 + 245 and 308 < y < 308 + 100 and self.ngCheckMode == False:
-                self.main_canvas.itemconfig(self.ngCheckListView, state="normal")
-                self.visionNgViewUpdate()
-                # main
-                self.resultNgViewListbox_main.place(x=48, y=587, width=366, height=343)
-                self.resultNgViewListbox_main_scrollbar.place(x=48 + 346, y=587, width=20, height=343)
-                # topclient
-                self.resultNgViewListbox_topclient.place(x=48, y=168, width=366, height=343)
-                self.resultNgViewListbox_topclient_scrollbar.place(x=48 + 346, y=168, width=20, height=343)
-                # sideclient1
-                self.resultNgViewListbox_sideclient1.place(x=494, y=168, width=366, height=343)
-                self.resultNgViewListbox_sideclient1_scrollbar.place(x=494 + 346, y=168, width=20, height=343)
-                if CodeSetup == "CONE":
-                    # sideclient2
-                    self.resultNgViewListbox_sideclient2.place(x=943, y=168, width=366, height=343)
-                    self.resultNgViewListbox_sideclient2_scrollbar.place(x=943 + 346, y=168, width=20, height=343)
-                    # sideclient3
-                    self.resultNgViewListbox_sideclient3.place(x=494, y=587, width=366, height=343)
-                    self.resultNgViewListbox_sideclient3_scrollbar.place(x=494 + 346, y=587, width=20, height=343)
-                    # sideclient4
-                    self.resultNgViewListbox_sideclient4.place(x=943, y=587, width=366, height=343)
-                    self.resultNgViewListbox_sideclient4_scrollbar.place(x=943 + 346, y=587, width=20, height=343)
-                else:
-                    # sideclient2
-                    self.resultNgViewListbox_sideclient2.place(x=494, y=587, width=366, height=343)
-                    self.resultNgViewListbox_sideclient2_scrollbar.place(x=494 + 346, y=168, width=20, height=343)
-                    # sideclient3
-                    self.resultNgViewListbox_sideclient3.place(x=943, y=587, width=366, height=343)
-                    self.resultNgViewListbox_sideclient3_scrollbar.place(x=943 + 346, y=587, width=20, height=343)
-
-                self.ngCheckMode = True
-
-            # NG 클릭 시 NG 카운트 정보 출력되는 이벤트 종료 버튼
-            if 1143 < x < 1321 and 966 < y < 1037 and self.ngCheckMode == True:
-                self.main_canvas.itemconfig(self.ngCheckListView, state="hidden")
-                # main
-                self.resultNgViewListbox_main.place(x=2000, y=2000, width=366, height=343)
-                self.resultNgViewListbox_main_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                # topclient
-                self.resultNgViewListbox_topclient.place(x=2000, y=2000, width=366, height=343)
-                self.resultNgViewListbox_topclient_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                # sideclient1
-                self.resultNgViewListbox_sideclient1.place(x=2000, y=2000, width=366, height=343)
-                self.resultNgViewListbox_sideclient1_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                if CodeSetup == "CONE":
-                    # sideclient2
-                    self.resultNgViewListbox_sideclient2.place(x=2000, y=2000, width=366, height=343)
-                    self.resultNgViewListbox_sideclient2_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                    # sideclient3
-                    self.resultNgViewListbox_sideclient3.place(x=2000, y=2000, width=366, height=343)
-                    self.resultNgViewListbox_sideclient3_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                    # sideclient4
-                    self.resultNgViewListbox_sideclient4.place(x=2000, y=2000, width=366, height=343)
-                    self.resultNgViewListbox_sideclient4_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                else:
-                    # sideclient2
-                    self.resultNgViewListbox_sideclient2.place(x=2000, y=2000, width=366, height=343)
-                    self.resultNgViewListbox_sideclient2_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                    # sideclient3
-                    self.resultNgViewListbox_sideclient3.place(x=2000, y=2000, width=366, height=343)
-                    self.resultNgViewListbox_sideclient3_scrollbar.place(x=2000, y=2000, width=20, height=343)
-                self.ngCheckMode = False
-
-            # ILJIN 클릭 시 LOG 출력
-            if 1446 < x < 1832 and 43 < y < 92:
-                self.view_mode = False if self.view_mode == True else True
-                if self.view_mode == False:
-                    self.main_canvas.itemconfig(self.stateText, state = 'normal')
-                    self.mainframe_log.place(x=2000, y=2000, width=428, height=349)
-                    self.mainframe_scrollbar.place(x=2000, y=2000, width=20, height=349)
-                    self.main_canvas.itemconfig(self.background_image, image=self.main_frame_img)
-                    for i in range(10):
-                        self.main_canvas.itemconfig(self.bad_image1[i], state="normal")
-                        self.main_canvas.itemconfig(self.bad_image2[i], state="normal")
-                        self.main_canvas.itemconfig(self.bad_text1[i], state="normal")
-                        self.main_canvas.itemconfig(self.bad_text2[i], state="normal")
-                else:
-                    self.main_canvas.itemconfig(self.stateText, state = 'hidden')
-                    self.mainframe_log.place(x=1414, y=492, width=428, height=539)
-                    self.mainframe_scrollbar.place(x=1411 + 408, y=492, width=20, height=539)
-                    self.main_canvas.itemconfig(self.background_image, image=self.main_frame_img2)
-                    for i in range(10):
-                        self.main_canvas.itemconfig(self.bad_image1[i], state="hidden")
-                        self.main_canvas.itemconfig(self.bad_image2[i], state="hidden")
-                        self.main_canvas.itemconfig(self.bad_text1[i], state="hidden")
-                        self.main_canvas.itemconfig(self.bad_text2[i], state="hidden")
-
-            # 관리자 모드 클릭 (우측 상단 톱니바퀴)
-            if 1846 < x < 1910 and 9 < y < 84:
-                self.main_canvas.itemconfig(self.AdminPasswordBg, state = 'normal')
-                self.main_canvas.itemconfig(self.showEntry, window = self.entry)
-                self.PasswordMode = True
-                self.management_mode = None
-                # management_frame.tkraise()
-                pass
-
-            check = 0
-            for i in range(9, -1, -1):
-                if 1376 < x < 1619 and 994 - check < y < 1044 - check and self.ngSettingMode == False:
-                    print(i)
-                    ngcage_frame.ngcageStage = 1
-                    ngcage_frame.ngcageNumber = i
-                    if ngcage_frame.ngCageUpdate1[ngcage_frame.ngcageNumber][0] == True:
-                        ngcage_frame.ngcageInit(ngcage_frame.ngcageStage, ngcage_frame.ngcageNumber)
-                        ngcage_frame.tkraise()
-                    else:
-                        print("ngCageUpdate1 not data")
-                if 1619 < x < 1879 and 994 - check < y < 1044 - check and self.ngSettingMode == False:
-                    print(i)
-                    ngcage_frame.ngcageStage = 2
-                    ngcage_frame.ngcageNumber = i
-                    if ngcage_frame.ngCageUpdate2[ngcage_frame.ngcageNumber][0] == True:
-                        ngcage_frame.ngcageInit(ngcage_frame.ngcageStage, ngcage_frame.ngcageNumber)
-                        ngcage_frame.tkraise()
-                    else:
-                        print("ngCageUpdate2 not data")
-                # self.bad_image1[i] = self.main_canvas.create_image(1636, 995-check, image = self.main_frame_bad, anchor = 'nw', state = 'normal')
-                # self.bad_text1[i] = self.main_canvas.create_text(1755, 1021-check, text='', font=('gothic', 20, 'bold'), fill='white', anchor='center')
-                check += 57
-
-            if 31 < x < 31 + 180 and 972 < y < 972 + 73:
-                print("HISTORY MODE")
-                history_frame.tkraise()
-
-            # SETTINGS 클릭 이벤트
-            if 251 < x < 251 + 180 and 972 < y < 972 + 73:
-                self.setting_mode = None
-                self.main_canvas.itemconfig(self.AdminPasswordBg, state = 'normal')
-                self.main_canvas.itemconfig(self.showEntry, window = self.entry)
-                self.PasswordMode = True
-
-            # SETTINGS 화면 SAVE 버튼
-            if 927 < x < 1105 and 972 < y < 1044:
-                if self.setting_mode == True:
-                    for i in range(5 if CodeSetup == 'CUP' else 6):
-                        try:
-                            self.scaleframe[i].destroy()
-                            print("distory comp")
-                            if STH.ManualMode == True:
-                                print('수동 상태 수치 조절 저장')
-                                TSD.sendAllClient(f"MPICKLE{i}") # 'M'anual mode
-                            else :
-                                print('자동 상태 수치 조절 저장')
-                                TSD.sendAllClient(f"APICKLE{i}") # 'A'uto mode
-                            time.sleep(0.1)
-                        except Exception as ex:
-                            print(ex)
-                            continue
-
-                    self.main_canvas.itemconfig(self.stateText, state = 'normal')
-                    self.main_canvas.itemconfig(self.back_image, state="hidden")
-                    self.main_canvas.itemconfig(self.save_image, state="hidden")
-                    self.setting_mode = False
-
-            # SETTINGS 화면 BACK 버튼
-            if 1146 < x < 1326 and 972 < y < 1044:
-                if self.setting_mode == True:
-                    self.setting_mode = False
-
-                    for i in range(5 if CodeSetup == 'CUP' else 6):
-                        try:
-                            self.scaleframe[i].destroy()
-                        except:
-                            pass
-                    self.main_canvas.itemconfig(self.stateText, state = 'normal')
-                    self.main_canvas.itemconfig(self.back_image, state="hidden")
-                    self.main_canvas.itemconfig(self.save_image, state="hidden")
-
-            if self.management_mode == True:
-                self.management_mode = False
-                main_frame.tkraise()
-        else:
-            # 패스워드 확인 클릭 시 (이때 SETTINGS, NG SETTINGS 화면이 전환됨)
-            if 801 < x < 941 and 579 < y < 634:
-                readPassword = tk.Entry.get(self.entry)
-                if readPassword == self.Password:
-                    self.main_canvas.itemconfig(self.stateText, state = 'hidden')
-                    self.main_canvas.itemconfig(self.AdminPasswordBg, state = 'hidden')
-                    self.main_canvas.itemconfig(self.showEntry, window = '')
-                    self.entry.delete(0,999)
-                    self.PasswordCheck = True
-                    self.PasswordMode = False
-                    print('password Check')
-
-                    # NG SETTINGS 화면
-                    if self.ngSettingMode == None:
-                        print("NG SETTINGS Btn Click")
-                        self.ngSettingLoad("setting")
-
-                        for i in range(6):
-                            if i == 5 and CodeSetup == 'CUP':
-                                break
-                            self.main_canvas.itemconfig(self.ngSettingText[i], state="normal")
-                        main_frame.main_canvas.itemconfig(main_frame.ngSettingBtn, state="normal")
-                        for i in range(ConnectClientCheck):
-                            self.main_canvas.itemconfig(self.ngSettingBg[i], state="normal")
-                        for i in range(ConnectClientCheck*2):
-                            self.main_canvas.itemconfig(self.entryBoxView[i], window = '')
-                        self.main_canvas.itemconfig(self.back_image, state="normal")
-                        self.main_canvas.itemconfig(self.save_image, state="normal")
-                        self.ngSettingMode = True
-
-                    # SETTINGS 화면
-                    if self.setting_mode == None:
-                        print("SETTING MODE")
-                        self.setting_mode = True
-
-                        if self.setting_mode == True:
-                            TSD.sendAllClient("SETTING")
-                            self.main_canvas.itemconfig(self.back_image, state="normal")
-                            self.main_canvas.itemconfig(self.save_image, state="normal")
-                    if self.management_mode == None:
-                        self.management_mode = True
-                        management_frame.tkraise()
-                else:
-                    messagebox.showerror("에러발생", "정확한 패스워드를 기입하여 주세요.")
-                    self.entry.delete(0,999)
-
-            if 977 < x < 1116 and 579 < y < 634:
-                print('password Pass, exit')
-                self.main_canvas.itemconfig(self.AdminPasswordBg, state = 'hidden')
-                self.main_canvas.itemconfig(self.showEntry, window = '')
-                self.entry.delete(0,999)
-                self.PasswordMode = False
-                self.ngSettingMode = False                
-                self.setting_mode = False
-                self.management_mode = False
-
-        # 불량 확인 # # # # # # # # # # # # # # # # # # # # # # # # # # 
-        if 699 < x < 699 + 187 and 969 < y < 969 + 79:
-            result = messagebox.askyesno("확인", "불량을 확인하시겠습니까?")
-            if result == True:
-                print('불량 확인')
-                self.ng_check_click = True
-                # 초기화
-                NF.ng_canvas.itemconfig(NF.part_name, text='')
-                NF.ng_canvas.itemconfig(NF.ng_name, text='')
-                NF.image_data = {
-                    'OK': {'filepaths': [], 'current_index': 0},
-                    'NG': {'filepaths': [], 'current_index': 0}
-                }
-                NF.ok_image = ''
-                NF.ng_image = ''
-            else:
-                self.ng_check_click = False
-            
-        # 111
-        if 25 < x < 25 + 415 and 119 < y < 119 + 316 :
-            if self.ng_check_click == True :
-                result = messagebox.askyesno("확인", "1차 상부를 확인하시겠습니까?")
-                if result == True:
-                    print('1차 상부 선택')
-                    self.ng_check_click = False
-                    if CodeSetup == "CONE":
-                        NF.cam_num = '111'
-                    else :
-                        NF.cam_num = '101'
-                    NF.tkraise()
-        # 112
-        if 471 < x < 471 + 415 and 119 < y < 119 + 316 :
-            if self.ng_check_click == True :
-                result = messagebox.askyesno("확인", "1차 대각을 확인하시겠습니까?")
-                if result == True:
-                    print('1차 대각 선택')
-                    self.ng_check_click = False
-                    if CodeSetup == "CONE":
-                        NF.cam_num = '112'
-                    else :
-                        NF.cam_num = '102'
-                    NF.tkraise()
-        # 113
-        if 920 < x < 920 + 415 and 119 < y < 119 + 316 and CodeSetup == "CONE":
-            if self.ng_check_click == True :
-                result = messagebox.askyesno("확인", "1차 측면을 확인하시겠습니까?")
-                if result == True:
-                    print('1차 측면 선택')
-                    self.ng_check_click = False
-                    NF.cam_num = '113'
-                    NF.tkraise()
-        # 114
-        if 25 < x < 25 + 415 and 537 < y < 537 + 316 :
-            if self.ng_check_click == True :
-                result = messagebox.askyesno("확인", "2차 상부를 확인하시겠습니까?")
-                if result == True:
-                    print('2차 상부 선택')
-                    self.ng_check_click = False
-                    if CodeSetup == "CONE":
-                        NF.cam_num = '114'
-                    else :
-                        NF.cam_num = '104'
-                    NF.tkraise()
-        # 115
-        if 471 < x < 471 + 415 and 537 < y < 537 + 316 :
-            if self.ng_check_click == True :
-                result = messagebox.askyesno("확인", "2차 대각을 확인하시겠습니까?")
-                if result == True:
-                    print('2차 대각 클릭')
-                    self.ng_check_click = False
-                    if CodeSetup == "CONE":
-                        NF.cam_num = '115'
-                    else :
-                        NF.cam_num = '103'
-                    NF.tkraise()
-        # 116
-        if 920 < x < 920 + 415 and 537 < y < 537 + 316 :
-            if self.ng_check_click == True :
-                result = messagebox.askyesno("확인", "2차 측면을 확인하시겠습니까?")
-                if result == True:
-                    print('2차 측면 클릭')
-                    self.ng_check_click = False
-                    if CodeSetup == "CONE":
-                        NF.cam_num = '116'
-                    else :
-                        NF.cam_num = '105'
-                    NF.tkraise()
-        # BACK 버튼
-        if 1683 < x < 1683 + 197 and 954 < y < 954 + 87 :
-            if self.ng_check_click == True :
-                self.ng_check_click = False
-
-    # 팝업창 gif 효과 
-    def twinkle(self, imagelist, cnt, done) :
-        if done == True :
-            self.main_canvas.itemconfig(self.popup_place, state="hidden")
-        elif cnt % 2 == 0 :
-            self.main_canvas.itemconfig(self.popup_place, image=imagelist[0], state="normal")
-        elif cnt % 2 == 1 :
-            self.main_canvas.itemconfig(self.popup_place, image=imagelist[1], state="normal")
-
-    # 팝업창 스레드
-    def popup_thread(self):
-        cnt = 0
-        while 1:
-            try :
-                time.sleep(0.5)
-                cnt += 1
-                if self.ng_check_click == False :
-                    self.twinkle(self.popup_image, cnt, True)
-                elif self.ng_check_click == True :
-                    self.twinkle(self.popup_image, cnt, False)
-
-                # 초기화
-                if cnt == 20 :
-                    cnt = 0
-            except :
-                pass
-
-
-class ngCageShowFrame(tk.Frame):
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.master = master
-        self.ngcageBgImage = ImageTk.PhotoImage(file=f"bg/{BgSetup}/ngcage.png")
-        self.ngcage_frame_connecticon = ImageTk.PhotoImage(file=f"bg/{BgSetup}/connecticon.png")
-
-        self.ngcageStage = 0
-        self.ngcageNumber = 0
-        self.ngcage_cam = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.updateImage = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.connectionCheck = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.ngcage_ok = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.ngcage_ng = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.nowSection = 0
-
-        self.ngCageUpdate1 = [
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-        ]
-        self.ngCageUpdate2 = [
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-            [False, [None, None, None, None, None, None], [None, None, None, None, None, None], [None],],
-        ]
-
-        self.bad_image_ngcage = [None] * 10
-        self.bad_text_ngcage = [None] * 10
-        self.create_widgets()
-
-    def create_widgets(self):
-        self.grid(row=0, column=0)
-        self.ngcage_canvas = tk.Canvas(self, width=1920, height=1080)
-        self.ngcageBg = self.ngcage_canvas.create_image(0, 0, image=self.ngcageBgImage, anchor="nw")
-        self.ngcage_cam[0] = self.ngcage_canvas.create_image(75, 596, image="", anchor="nw", state="normal")
-        self.ngcage_cam[1] = self.ngcage_canvas.create_image(75, 178, image="", anchor="nw", state="normal")
-        self.ngcage_cam[2] = self.ngcage_canvas.create_image(523, 179, image="", anchor="nw", state="normal")
-        if CodeSetup == "CONE":
-            self.ngcage_cam[3] = self.ngcage_canvas.create_image(971, 179, image="", anchor="nw", state="normal")
-            self.ngcage_cam[4] = self.ngcage_canvas.create_image(523, 597, image="", anchor="nw", state="normal")
-            self.ngcage_cam[5] = self.ngcage_canvas.create_image(971, 597, image="", anchor="nw", state="normal")
-        else:
-            self.ngcage_cam[3] = self.ngcage_canvas.create_image(523, 597, image="", anchor="nw", state="normal")
-            self.ngcage_cam[4] = self.ngcage_canvas.create_image(971, 597, image="", anchor="nw", state="normal")
-        self.ngcage_ok[0] = self.ngcage_canvas.create_image(71, 905, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        self.ngcage_ok[1] = self.ngcage_canvas.create_image(71, 488, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        self.ngcage_ok[2] = self.ngcage_canvas.create_image(517, 488, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.ngcage_ok[3] = self.ngcage_canvas.create_image(965, 488, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-            self.ngcage_ok[4] = self.ngcage_canvas.create_image(517, 905, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-            self.ngcage_ok[5] = self.ngcage_canvas.create_image(965, 905, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        else:
-            self.ngcage_ok[3] = self.ngcage_canvas.create_image(517, 905, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-            self.ngcage_ok[4] = self.ngcage_canvas.create_image(965, 905, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        self.ngcage_ng[0] = self.ngcage_canvas.create_image(291, 905, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        self.ngcage_ng[1] = self.ngcage_canvas.create_image(291, 488, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        self.ngcage_ng[2] = self.ngcage_canvas.create_image(738, 488, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.ngcage_ng[3] = self.ngcage_canvas.create_image(1186, 488, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-            self.ngcage_ng[4] = self.ngcage_canvas.create_image(738, 905, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-            self.ngcage_ng[5] = self.ngcage_canvas.create_image(1186, 905, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        else:
-            self.ngcage_ng[3] = self.ngcage_canvas.create_image(738, 905, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-            self.ngcage_ng[4] = self.ngcage_canvas.create_image(1186, 905, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-
-        self.connectionCheck[0] = self.ngcage_canvas.create_image(127, 74, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-        self.connectionCheck[1] = self.ngcage_canvas.create_image(127, 30, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-        self.connectionCheck[2] = self.ngcage_canvas.create_image(307, 30, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.connectionCheck[3] = self.ngcage_canvas.create_image(487, 30, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-            self.connectionCheck[4] = self.ngcage_canvas.create_image(307, 74, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-            self.connectionCheck[5] = self.ngcage_canvas.create_image(487, 74, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-        else:
-            self.connectionCheck[3] = self.ngcage_canvas.create_image(307, 74, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-            self.connectionCheck[4] = self.ngcage_canvas.create_image(487, 74, image=self.ngcage_frame_connecticon, anchor="nw", state="hidden")
-
-        check = 0
-        for i in range(10):
-            self.bad_image_ngcage[i] = self.ngcage_canvas.create_image(1527, 266 + check, image=main_frame.main_frame_bad, anchor="nw", state="hidden")
-            self.bad_text_ngcage[i] = self.ngcage_canvas.create_text(1653, 292 + check, text="", font=("gothic", 18, "bold"), fill="white", anchor="center", state="normal",)
-            check += 57
-        self.nowSectionText = self.ngcage_canvas.create_text(1645, 204, text=self.nowSection, font=("gothic", 18, "bold"), fill="white", anchor="center", state="normal",)
-
-        self.ngcage_canvas.bind("<Button-1>", self.ngcage_btn)
-        self.ngcage_canvas.pack()
-
-    def ngcageInit(self, cagenum, number):
-        if cagenum == 1:
-            # print(self.ngCageUpdate1[number])
-            for x, i in enumerate(self.ngCageUpdate1[number][3]):
-                self.ngcage_canvas.itemconfig(self.bad_text_ngcage[x], text=DTT.badType[i])
-                self.ngcage_canvas.itemconfig(self.bad_image_ngcage[x], state="normal")
-
-            for i in range(6 if CodeSetup == "CONE" else 5):
-                try:
-                    self.show_img(self.ngCageUpdate1[number][2][i][0], i)
-                except:
-                    NoneImg = cv2.imread(f"bg/{BgSetup}/NoneData.png")
-                    self.show_img(NoneImg, i)
-
-            self.imageUpdate()
-
-        elif cagenum == 2:
-            # print(self.ngCageUpdate2[number])
-            for x, i in enumerate(self.ngCageUpdate2[number][3]):
-                self.ngcage_canvas.itemconfig(self.bad_text_ngcage[x], text=DTT.badType[int(i)])
-                self.ngcage_canvas.itemconfig(self.bad_image_ngcage[x], state="normal")
-
-            for i in range(6 if CodeSetup == "CONE" else 5):
-                # print(type(self.ngCageUpdate2[number][2][i][0]))
-                try:
-                    self.show_img(self.ngCageUpdate2[number][2][i][0], i)
-                except:
-                    NoneImg = cv2.imread(f"bg/{BgSetup}/NoneData.png")
-                    self.show_img(NoneImg, i)
-
-            self.imageUpdate()
-
-    def show_img(self, image, number):
-        # try:
-        #     image = cv2.resize(image, dsize=(391, 290), interpolation=cv2.INTER_AREA)
-        # except:
-        #     img = cv2.imread(f'bg/{BgSetup}/NoneData.png')
-        #     image = cv2.resize(img, dsize=(391, 290), interpolation=cv2.INTER_AREA)
-
-        self.cvtimg = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
-        self.cvtshow = Image.fromarray(self.cvtimg)
-        # self.cvtshow = Image.fromarray(image)
-        self.updateImage[number] = ImageTk.PhotoImage(image=self.cvtshow)
-        self.ngcage_canvas.itemconfig(self.ngcage_cam[number], image=self.updateImage[number])
-
-    def imageUpdate(self):
-        if self.ngcageStage == 1:
-            for i in range(6 if CodeSetup == "CONE" else 5):
-                # print(type(self.ngCageUpdate2[self.ngcageNumber][2][i][self.nowSection]))
-                try:
-                    self.show_img(self.ngCageUpdate1[self.ngcageNumber][2][i][self.nowSection], i)
-                    print(self.ngCageUpdate1[self.ngcageNumber][1][i])
-                    if self.ngCageUpdate1[self.ngcageNumber][1][i] == DTT.NoneData:
-                        self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="hidden")
-                        self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="hidden")
-                    elif "1" in self.ngCageUpdate1[self.ngcageNumber][1][i]:
-                        self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="normal")
-                        self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="hidden")
-                    else:
-                        self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="hidden")
-                        self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="normal")
-                except:
-                    NoneDataImg = cv2.imread(f"bg/{BgSetup}/NoneData.png")
-                    self.show_img(NoneDataImg, i)
-                    self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="hidden")
-                    self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="hidden")
-
-        elif self.ngcageStage == 2:
-            for i in range(6 if CodeSetup == "CONE" else 5):
-                try:
-                    # print(type(self.ngCageUpdate2[self.ngcageNumber][2][i][self.nowSection]))
-                    self.show_img(self.ngCageUpdate2[self.ngcageNumber][2][i][self.nowSection], i)
-                    print(self.ngCageUpdate2[self.ngcageNumber][1][i])
-
-                    if self.ngCageUpdate2[self.ngcageNumber][1][i] == DTT.NoneData:
-                        self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="hidden")
-                        self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="hidden")
-                    elif "1" in self.ngCageUpdate2[self.ngcageNumber][1][i]:
-                        self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="normal")
-                        self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="hidden")
-                    else:
-                        self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="hidden")
-                        self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="normal")
-                except:
-                    NoneDataImg = cv2.imread(f"bg/{BgSetup}/NoneData.png")
-                    self.show_img(NoneDataImg, i)
-                    self.ngcage_canvas.itemconfig(self.ngcage_ng[i], state="hidden")
-                    self.ngcage_canvas.itemconfig(self.ngcage_ok[i], state="hidden")
-
-    def ngcage_btn(self, event):
-        x = event.x
-        y = event.y
-
-        print(x, y)
-
-        if 1448 < x < 1847 and 875 < y < 1023:
-            for i in range(10):
-                self.ngcage_canvas.itemconfig(self.bad_text_ngcage[i], text="")
-                self.ngcage_canvas.itemconfig(self.bad_image_ngcage[i], state="hidden")
-            self.nowSection = 0
-            self.ngcage_canvas.itemconfig(self.nowSectionText, text=self.nowSection)
-            main_frame.tkraise()
-
-        if 1491 < x < 1619 and 160 < y < 249:
-            print("left image move")
-            self.nowSection -= 1
-            if self.nowSection == -1:
-                self.nowSection = 0
-            self.ngcage_canvas.itemconfig(self.nowSectionText, text=self.nowSection)
-
-            self.imageUpdate()
-
-        if 1674 < x < 1797 and 160 < y < 252:
-            print("right image move")
-            self.nowSection += 1
-            if self.nowSection == 11:
-                self.nowSection = 10
-            self.ngcage_canvas.itemconfig(self.nowSectionText, text=self.nowSection)
-
-            self.imageUpdate()
-
-
+	def __init__(self, master=None):
+		super().__init__(master)
+		self.master = master
+
+		self.bg_image = ImageTk.PhotoImage(file=f"bg/{line_type}/main_bg.png")
+		self.client_connect_complete_image = ImageTk.PhotoImage(file=f"bg/common/connecticon.png")
+		self.client_connect_fail_image = ImageTk.PhotoImage(file=f"bg/common/connecticon_fail.png")
+		self.ok_sign_image = ImageTk.PhotoImage(file=f"bg/common/OK.png")
+		self.ng_sign_image = ImageTk.PhotoImage(file=f"bg/common/NG.png")
+		self.main_frame_off_btn = ImageTk.PhotoImage(file=f"bg/common/main_frame_off_btn.png")
+		self.camera_ng_count_check_btn = ImageTk.PhotoImage(file=f"bg/common/camera_ng_count_check_btn.png")
+		self.ng_log_checking_popup_image = ImageTk.PhotoImage(file=f"bg/common/ng_log_checking_popup.png")
+
+		# 클라이언트 연결 상태 깜빡임 관련 변수
+		self.client_blink_states = [False] * client_num  # 각 클라이언트의 깜빡임 상태
+		self.client_blink_timers = [None] * client_num   # 각 클라이언트의 깜빡임 타이머
+		self.client_connection_states = ['disconnected'] * client_num  # 각 클라이언트의 연결 상태: 'disconnected', 'connecting', 'failed', 'connected'
+		self.client_connecting_timers = [None] * client_num  # 각 클라이언트의 connecting 타임아웃 타이머
+		self.connecting_timeout = 20000  # connecting 상태 타임아웃 (20초)
+		
+		# 클라이언트 상태 팝업 관련 변수
+		self.client_status_popup = None  # 클라이언트 상태 팝업 창
+		self.client_load_failures = {}  # 클라이언트별 로드 실패 정보 저장
+
+		self.reset_time = model_info.get("reset_info", {}).get("time", "1992-08-22 00:00:00")  # 로그 초기화 시간
+
+		self.master.attributes("-fullscreen", True)
+		self.master.bind("<F11>", lambda event: self.master.attributes("-fullscreen", not self.master.attributes("-fullscreen")))
+		self.master.bind("<Escape>", lambda event: self.master.attributes("-fullscreen", False))
+		self.create_widgets()
+
+	def create_widgets(self):
+		self.grid(row=0, column=0)
+		self.main_canvas = tk.Canvas(self, width=1920, height=1080)
+		self.BG = self.main_canvas.create_image(0, 0, image=self.bg_image, anchor="nw")
+
+		self.main_frame_btn_place = self.main_canvas.create_image(90, 977, image=self.main_frame_off_btn, anchor="nw", state="hidden")
+		self.camera_ng_count_check_btn_place = self.main_canvas.create_image(830, 977, image=self.camera_ng_count_check_btn, anchor="nw", state="hidden")
+
+		# 화면 표시 폰트 서식
+		self.font = ('Malgun Gothic', 16, 'bold')
+		self.result_log_font = ('Malgun Gothic', 10)
+
+		# 클라이언트 연결 상태 표시
+		self.client_connect_complete_place_list = [None] * client_num
+		for i in range(client_num):
+			if i < 3:
+				self.client_connect_complete_place_list[i] = self.main_canvas.create_image(1071+(i*128), 31, 
+																						   image=self.client_connect_complete_image, 
+																						   anchor="nw", state="hidden", tags=f"client_status_{i}")
+			else:
+				self.client_connect_complete_place_list[i] = self.main_canvas.create_image(1071+((i-3)*128), 73, 
+																						   image=self.client_connect_complete_image, 
+																						   anchor="nw", state="hidden", tags=f"client_status_{i}")
+	
+		# 이미지 출력 공간 선언
+		self.show_image_list = [None] * client_num 
+		self.show_place_list = [None] * client_num
+		for i in range(client_num):
+			if i < 3:
+				self.show_place_list[i] = self.main_canvas.create_image(96+(i*441), 140, image='', anchor="nw", state="hidden")
+			else :
+				self.show_place_list[i] = self.main_canvas.create_image(96+((i-3)*441), 553, image='', anchor="nw", state="hidden")
+		
+		# OK, NG 표시 출력 공간 선언
+		self.ok_sign_place_list = [None] * client_num
+		self.ng_sign_place_list = [None] * client_num
+		for i in range(client_num):
+			if i < 3:
+				self.ok_sign_place_list[i] = self.main_canvas.create_image(91+(i*441), 444, image = self.ok_sign_image, anchor="nw", state="hidden")
+				self.ng_sign_place_list[i] = self.main_canvas.create_image(311+(i*441), 444, image = self.ng_sign_image, anchor="nw", state="hidden")
+			else :
+				self.ok_sign_place_list[i] = self.main_canvas.create_image(91+((i-3)*441), 857, image = self.ok_sign_image, anchor="nw", state="hidden")
+				self.ng_sign_place_list[i] = self.main_canvas.create_image(311+((i-3)*441), 857, image = self.ng_sign_image, anchor="nw", state="hidden")
+
+		# 모델 이름 저장 변수
+		self.model_name_place = self.main_canvas.create_text(1646, 163, text = 'None', font = self.font, fill='white', anchor='center')
+
+		# 상태 표시 엔트리
+		self.state_entry = tk.Entry(self.main_canvas, font=self.font, width=27, bg='#2a5565', fg='white')
+		self.state_entry_window = self.main_canvas.create_window(1596, 237, window=self.state_entry)
+
+		# 카운트 저장 변수 선언
+		self.total_count, self.ok_count, self.ng_count = DB.read_count()
+		self.total_count_place = self.main_canvas.create_text(1510, 389, text = self.total_count, font = self.font, fill='white', anchor='center')
+		self.ok_count_place = self.main_canvas.create_text(1656, 389, text = self.ok_count, font = self.font, fill ='#51fc59', anchor='center') 
+		self.ng_count_place = self.main_canvas.create_text(1787, 389, text = self.ng_count, font = self.font, fill ='#ec5151', anchor='center') 
+
+		# 중대 불량 이력 리스트
+		self.critical_ng_log_list_click = False
+		self.critical_ng_log = tk.Listbox(self.main_canvas, fg='white', bg='#2a5565', font=self.result_log_font, exportselection=False, selectmode='single')
+		self.critical_ng_log.place(x=1427, y=481, width=206, height=556) 
+		self.critical_ng_log_scrollbar = tk.Scrollbar(self.main_canvas, bg='#2a5565', orient="vertical")
+		self.critical_ng_log_scrollbar.config(command=self.critical_ng_log.yview)
+		self.critical_ng_log_scrollbar.place(x=1618, y=481, width=15, height=556)
+		self.critical_ng_log.config(yscrollcommand=self.critical_ng_log_scrollbar.set)
+		self.critical_ng_log.bind('<<ListboxSelect>>', self.on_log_select)
+		self.critical_ng_log.bind('<Up>', self.on_log_key)
+		self.critical_ng_log.bind('<Down>', self.on_log_key)
+
+		# 일반 불량 이력 리스트
+		self.normal_ng_log_list_click = False
+		self.normal_ng_log = tk.Listbox(self.main_canvas, fg='white', bg='#2a5565', font=self.result_log_font, exportselection=False, selectmode='single')
+		self.normal_ng_log.place(x=1660, y=481, width=206, height=556) 
+		self.normal_ng_log_scrollbar = tk.Scrollbar(self.main_canvas, bg='#2a5565', orient="vertical")
+		self.normal_ng_log_scrollbar.config(command=self.normal_ng_log.yview)
+		self.normal_ng_log_scrollbar.place(x=1851, y=481, width=15, height=556)
+		self.normal_ng_log.config(yscrollcommand=self.normal_ng_log_scrollbar.set)
+		self.normal_ng_log.bind('<<ListboxSelect>>', self.on_log_select)
+		self.normal_ng_log.bind('<Up>', self.on_log_key)
+		self.normal_ng_log.bind('<Down>', self.on_log_key)
+
+		self.ng_log_checking_popup = self.main_canvas.create_image(1193, 977, image=self.ng_log_checking_popup_image, anchor="nw", state="hidden")
+
+		self.ng_log_checking = False  # 불량 로그 확인 여부
+		self.ng_statistics_mode = False  # 카메라별 불량 수량 확인 모드
+		
+		self.main_canvas.bind("<Button-1>", self.main_btn)
+		self.main_canvas.pack()
+
+	def save_info_json(self, new_model_info):
+		"""모델 정보 저장"""
+		global model_info
+		with open('config/info.json', 'w', encoding='utf-8') as f:
+			json.dump(new_model_info, f, ensure_ascii=False, indent=4)
+		
+		model_info = new_model_info
+		
+	def read_current_state(self):
+		"""현재 상태 코멘트 읽기"""
+		current_state = model_info["models"][MB.model_name]["current_status"]
+		self.state_entry.delete(0, END)
+		self.state_entry.insert(0, current_state)
+
+	def save_current_state(self):
+		"""현재 상태 코멘트 저장"""
+		result = messagebox.askyesno("확인", "현재 상태를 저장하시겠습니까?")
+		if result:
+			current_state = self.state_entry.get()
+			model_info["models"][MB.model_name]["current_status"] = current_state
+			self.save_info_json(model_info)
+			SS.send_json()
+			print("current state saved")
+	
+	def on_closing(self):
+		"""프로그램 종료 확인"""
+		result = messagebox.askyesno("확인", "프로그램을 종료하시겠습니까?")
+		if result:
+			sys.exit(0)
+
+	def main_btn(self, event):
+		"""메인 버튼 클릭 이벤트"""
+		x = event.x
+		y = event.y
+		
+		if 1870 < x < 1912 and 11 < y < 53:
+			print("program exit")
+			self.on_closing()
+		
+		elif 1783 < x < 1875 and 205 < y < 269:
+			print("current state change")
+			self.save_current_state()
+		
+		elif 1189 < x < 1377 and 972 < y < 1055:
+			if self.ng_log_checking:
+				print("ng log checking popup close")
+				self.clear_log_images()
+		
+		# 메인 화면 버튼 클릭
+		elif 89 < x < 271 and 976 < y < 1051:
+			print("main frame open")
+			if MB.model_name:
+				if self.ng_statistics_mode:
+					self.toggle_ng_statistics_mode()
+				
+				if self.ng_log_checking:
+					self.clear_log_images()
+		
+		# 이력 조회 버튼 클릭
+		elif 274 < x < 456 and 976 < y < 1051:
+			print("history frame open")
+			HF.tkraise()
+		
+		# 관리자 모드 클릭
+		elif 459 < x < 641 and 976 < y < 1051:
+			print("admin frame open")
+			AF.tkraise()
+		
+		# 최근 불량 확인 버튼 클릭
+		elif 644 < x < 826 and 976 < y < 1051:
+			print("recent ng check frame open")
+			RN.tkraise()
+		
+		# 카메라별 불량 수량 확인
+		elif 829 < x < 1011 and 976 < y < 1051:
+			print("camera ng count check")
+			if self.ng_log_checking:
+				self.clear_log_images()
+
+			self.toggle_ng_statistics_mode()
+		
+		elif 0 < x < 100 and 0 < y < 100:  # 테스트용
+			print("start - test")
+			HW.reset_variables()
+			SS.send_msg_to_client("start")
+		
+		# 클라이언트 상태 영역 클릭 처리
+		elif self.is_client_status_click(x, y):
+			client_idx = self.get_client_index_from_click(x, y)
+			if client_idx is not None:
+				self.show_client_status_popup(client_idx)
+
+	def update_count(self, final_station_dict):
+		"""카운트 업데이트"""
+		count_type = 'OK'
+		for client_id, result in final_station_dict.items():
+			label = result['label']
+			if (label is None) or ('OK' not in label):
+				count_type = 'NG'
+				break
+
+		DB.update_count(count_type)
+		self.total_count, self.ok_count, self.ng_count = DB.read_count()
+		self.main_canvas.itemconfig(self.total_count_place, text=self.total_count)
+		self.main_canvas.itemconfig(self.ok_count_place, text=self.ok_count)
+		self.main_canvas.itemconfig(self.ng_count_place, text=self.ng_count)
+	
+	def count_reset(self, reset_type):
+		"""카운트 리셋
+		Args:
+			reset_type (str): 리셋 타입 (RESET, NG_RESET)
+				RESET: 전체 리셋
+				NG_RESET: 불량 카운트만 리셋
+		"""
+		DB.update_count(reset_type)
+		self.total_count, self.ok_count, self.ng_count = DB.read_count()
+		self.main_canvas.itemconfig(self.total_count_place, text=self.total_count)
+		self.main_canvas.itemconfig(self.ok_count_place, text=self.ok_count)
+		self.main_canvas.itemconfig(self.ng_count_place, text=self.ng_count)
+
+	def switch_ok_ng_sign(self, label, display_idx):
+		"""OK, NG 표시 스위치"""
+		label = str(label).upper()
+		if label == 'NONE':
+			self.main_canvas.itemconfig(self.ok_sign_place_list[display_idx], state='hidden')
+			self.main_canvas.itemconfig(self.ng_sign_place_list[display_idx], state='hidden')
+		elif 'OK' not in label:
+			MF.main_canvas.itemconfig(MF.ok_sign_place_list[display_idx], state='hidden')
+			MF.main_canvas.itemconfig(MF.ng_sign_place_list[display_idx], state='normal')
+		else:
+			MF.main_canvas.itemconfig(MF.ok_sign_place_list[display_idx], state='normal')
+			MF.main_canvas.itemconfig(MF.ng_sign_place_list[display_idx], state='hidden')
+	
+	def update_result_log(self):
+		"""검사 결과 로그 업데이트"""
+		results_table = ['critical_results', 'normal_results']
+
+		for table in results_table:
+			rows = DB.read_result(table, self.reset_time)
+			
+			if table == 'critical_results':
+				log_listbox = self.critical_ng_log
+			else:
+				log_listbox = self.normal_ng_log 
+			
+			# 기존 로그 삭제
+			log_listbox.delete(0, tk.END)
+			
+			# DB에서 읽어온 로그들을 UI에 표시
+			for row in rows:
+				# 불량이 있는 클라이언트들의 파트 정보 수집
+				ng_parts = []  # 일반 불량 파트들
+				none_parts = []  # 미검사 파트들
+				critical_ng_parts = []  # 중대불량 파트들
+				all_ok = True
+				
+				for client_id in line_config['client_ids']:
+					result_column = f"{client_id}_result"
+					if result_column in row and row[result_column]:
+						result_value = str(row[result_column]).upper()
+						if result_value == 'NONE':  # None인 경우 미검사로 처리
+							client_name = model_info['models'][MB.model_name][client_id]['name']
+							none_parts.append(client_name)
+							all_ok = False
+						elif ':' in result_value:  # 예)"5시 외관 검사:NG" 형태에서 파트 이름만 추출
+							part_name, label = result_value.split(':', 1)
+							if 'OK' not in label:
+								client_name = model_info['models'][MB.model_name][client_id]['name']
+								part_info = f"{client_name} {part_name}"
+								
+								# 중대불량 여부 확인
+								if table == 'critical_results' and label in model_info['models'][MB.model_name][client_id]['critical_ng_list']:
+									critical_ng_parts.append(part_info)
+								else:
+									ng_parts.append(part_info)
+								all_ok = False
+					else:
+						# 결과가 없는 경우도 미검사로 처리
+						client_name = model_info['models'][MB.model_name][client_id]['name']
+						none_parts.append(client_name)
+						all_ok = False
+				
+				# 전부 OK인 경우 로그를 남기지 않음
+				if all_ok:
+					continue
+				
+				# 파트 정보 조합 (중대불량 우선)
+				if table == 'critical_results' and critical_ng_parts:
+					# 중대불량이 있는 경우 중대불량을 우선 표시
+					all_parts = critical_ng_parts + ng_parts + none_parts
+					if len(all_parts) == 1:
+						part_info = all_parts[0]
+					else:
+						part_info = f"{all_parts[0]} 외 {len(all_parts)-1}"
+				elif ng_parts and none_parts:  # 불량과 미검사가 혼재 - 하나로 통합
+					all_parts = ng_parts + none_parts
+					if len(all_parts) == 1:
+						part_info = all_parts[0]
+					else:
+						part_info = f"{all_parts[0]} 외 {len(all_parts)-1}"
+				elif ng_parts:  # 불량만 있는 경우
+					if len(ng_parts) == 1:
+						part_info = ng_parts[0]
+					else:
+						part_info = f"{ng_parts[0]} 외 {len(ng_parts)-1}"
+				elif none_parts:  # 미검사만 있는 경우
+					if len(none_parts) == 1:
+						part_info = f"{none_parts[0]} 미검사"
+					else:
+						part_info = f"{none_parts[0]} 외 {len(none_parts)-1}"
+
+				# 불량 타입 정보 수집 (한글 이름으로 변환)
+				ng_types = []
+				for client_id in line_config['client_ids']:
+					result_column = f"{client_id}_result"
+					if result_column in row and row[result_column]:
+						result_value = str(row[result_column]).upper()
+						if result_value != 'NONE' and ':' in result_value:
+							part_name, label = result_value.split(':', 1)
+							if 'ERROR' in label:
+								ng_types.append('검사 오류')
+								break
+							elif label == 'DETECTION':
+								ng_types.append('각인 누락')
+								break
+							elif 'OK' not in label:
+								# label_ng_conditions에서 한글 이름 찾기
+								for client_id_check in line_config['client_ids']:
+									if label in model_info['models'][MB.model_name][client_id_check]['label_ng_conditions']:
+										korean_name = model_info['models'][MB.model_name][client_id_check]['label_ng_conditions'][label][0]
+										ng_types.append(korean_name)
+										break
+				
+				# 불량 타입 조합
+				if not ng_types and none_parts:
+					ng_type = "미검사"
+				elif len(ng_types) == 1:
+					ng_type = ng_types[0]
+				else:
+					ng_type = f"{ng_types[0]} 외 {len(ng_types)-1}건"
+				
+				# 로그 형식: [시간] 파트 정보
+				#           : 불량 타입
+				log_time = row['input_time'].strftime('%H:%M:%S')
+				
+				# 첫 번째 줄 (시간 + 파트 정보)
+				log_listbox.insert(tk.END, f"[{log_time}] {part_info}")
+				# 두 번째 줄 (불량 타입)
+				log_listbox.insert(tk.END, f"  : {ng_type}")
+
+	def clear_ng_log_listboxes(self):
+		"""중대/일반 불량 이력 리스트 박스 로그 모두 초기화"""
+		self.reset_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+		model_info['reset_info']['time'] = self.reset_time
+		self.save_info_json(model_info)
+		SS.send_json()
+		self.critical_ng_log.delete(0, tk.END)
+		self.normal_ng_log.delete(0, tk.END)
+		
+	def on_log_select(self, event):
+		"""로그 선택 이벤트 핸들러 (중대/일반 불량 통합)"""
+		# 카메라별 불량 수량 확인 모드 종료
+		if self.ng_statistics_mode:
+			self.toggle_ng_statistics_mode()
+		
+		# 어떤 리스트박스에서 이벤트가 발생했는지 확인
+		widget = event.widget
+		
+		# 클릭한 위치가 실제 항목인지 확인
+		index = widget.nearest(event.y)
+		if index < 0:
+			# 빈 공간을 클릭한 경우 선택 해제
+			widget.selection_clear(0, tk.END)
+			return
+		
+		self.ng_log_checking = True
+		self.main_canvas.itemconfig(self.ng_log_checking_popup, state='normal')
+
+		# 다른 리스트박스의 선택 해제
+		if widget == self.critical_ng_log:
+			self.normal_ng_log.selection_clear(0, tk.END)
+		else:
+			self.critical_ng_log.selection_clear(0, tk.END)
+		
+		if not widget.curselection():
+			return
+			
+		selected_idx = widget.curselection()[0]
+		pair_idx = selected_idx - (selected_idx % 2)  # 짝수 인덱스 (첫 번째 줄)
+		
+		# 선택된 항목들을 쌍으로 선택
+		widget.selection_clear(0, tk.END)
+		widget.selection_set(pair_idx)
+		widget.selection_set(pair_idx + 1)
+		
+		# 로그에서 시간 추출
+		log_line = widget.get(pair_idx)  # 첫 번째 줄 (시간 포함)
+		import re
+		match = re.search(r"\[(\d{2}:\d{2}:\d{2})\]", log_line)
+		if not match:
+			return
+		
+		log_time = match.group(1)  # '18:06:30'
+		
+		# 해당 테이블에서 로그 조회
+		if widget == self.critical_ng_log:
+			table_name = 'critical_results'
+		else:
+			table_name = 'normal_results'
+		
+		# DB에서 해당 시간의 로그 조회
+		row = DB.get_result_by_time_from_table(log_time, table_name)
+		if row:
+			self.main_show_log_images_from_row(row)
+		else:
+			LM.log_print(f"[ERROR] No result found for time: {log_time} in {table_name}")
+
+	def clear_log_images(self):
+		"""로그 이미지 초기화"""
+		self.main_canvas.itemconfig(self.ng_log_checking_popup, state='hidden')
+		self.ng_log_checking = False
+		HW.display_results_images(HW.station4_dict)  # 마지막 결과 다시 표시
+
+	def on_log_key(self, event):
+		"""로그 방향키 이동"""
+		widget = event.widget
+		size = widget.size()
+		sel = widget.curselection()
+		if not sel:
+			return
+		idx = sel[0] - (sel[0] % 2)
+		if event.keysym == "Up":
+			new_idx = max(0, idx - 2)
+		elif event.keysym == "Down":
+			new_idx = min(size - 2, idx + 2)
+		else:
+			return
+		widget.selection_clear(0, tk.END)
+		widget.selection_set(new_idx)
+		widget.selection_set(new_idx + 1)
+		widget.activate(new_idx)  # 커서를 첫 줄로 이동
+		widget.see(new_idx)
+		# 방향키 이동 시에도 on_log_select를 호출하여 이미지 등 갱신
+		fake_event = type('Event', (object,), {'widget': widget, 'y': 0})()
+		self.on_log_select(fake_event)
+
+	def main_show_log_images_from_row(self, row):
+		"""DB 행 데이터에서 이미지 표시"""
+		for client_id in line_config['client_ids']:
+			result_column = f"{client_id}_result"
+			path_column = f"{client_id}_path"
+			
+			# 결과와 이미지 경로 가져오기
+			result_value = row.get(result_column, 'None')
+			if ':' in result_value:
+				label = str(result_value.split(':')[1]).upper()
+			else:
+				label = str(result_value).upper()
+			image_path = row.get(path_column, 'None')
+			
+			# 표시 인덱스 가져오기
+			display_idx = HW.inspection_sequence[client_id]
+			
+			# 이미지 생성 및 표시
+			show_image = None
+			
+			# 결과가 None or error인 경우
+			if label == 'NONE' or 'ERROR' in label:
+				show_image = HW.make_show_image(client_id, label, None)
+			else:  # 검사 결과 정상인 경우
+				try:
+					abs_path = os.path.join('db', image_path)
+					image = cv2.imread(abs_path)
+					show_image = HW.make_show_image(client_id, label, image)
+				except Exception as e:
+					LM.log_print(f"[ERROR] Failed to load image: {str(e)}")
+					show_image = HW.make_show_image(client_id, 'ERROR', None)
+			
+			# 캔버스에 이미지 표시
+			self.show_image_list[display_idx] = show_image
+			self.main_canvas.itemconfig(self.show_place_list[display_idx], 
+									   image=self.show_image_list[display_idx], 
+									   state='normal')
+			
+			# OK/NG 신호 표시
+			self.switch_ok_ng_sign(label, display_idx)
+
+	# -------------------- 클라이언트 연결 상태 관리 -------------------- #
+
+	def connect_complete_check(self, client_id, connected):
+		"""클라이언트 연결 완료 확인"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+			if connected:
+				# 연결 성공 시에만 connecting 상태로 설정하고 깜빡임 시작
+				self.client_connection_states[idx] = 'connecting'
+				
+				# 이미지를 정상 이미지로 설정 (이전 실패 이미지에서 복구)
+				self.main_canvas.itemconfig(self.client_connect_complete_place_list[idx], 
+										   image=self.client_connect_complete_image, state='normal')
+				
+				self.start_client_blink(client_id, -1)  # 무한 깜빡임 (모델 로드 완료까지)
+				
+				# connecting 타임아웃 설정 (20초 후 failed로 변경)
+				self._start_connecting_timeout(client_id)
+				
+				# 이전 실패 정보 초기화
+				if client_id in self.client_load_failures:
+					del self.client_load_failures[client_id]
+				
+			else:
+				# 연결 해제 시 disconnected 상태로 설정
+				self.client_connection_states[idx] = 'disconnected'
+				self.stop_client_blink(client_id)
+				self._stop_connecting_timeout(client_id)
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id: {client_id}")
+
+	def _start_connecting_timeout(self, client_id):
+		"""connecting 상태 타임아웃 시작"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+			
+			# 기존 타임아웃 타이머가 있으면 취소
+			if self.client_connecting_timers[idx]:
+				self.master.after_cancel(self.client_connecting_timers[idx])
+			
+			# 새로운 타임아웃 타이머 설정
+			self.client_connecting_timers[idx] = self.master.after(
+				self.connecting_timeout, 
+				lambda: self._handle_connecting_timeout(client_id)
+			)
+			
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id for timeout: {client_id}")
+
+	def _stop_connecting_timeout(self, client_id):
+		"""connecting 상태 타임아웃 중지"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+			
+			if self.client_connecting_timers[idx]:
+				self.master.after_cancel(self.client_connecting_timers[idx])
+				self.client_connecting_timers[idx] = None
+				
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id for stop timeout: {client_id}")
+
+	def _handle_connecting_timeout(self, client_id):
+		"""connecting 상태 타임아웃 처리"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+			
+			# 현재 상태가 connecting인 경우에만 처리
+			if self.client_connection_states[idx] == 'connecting':
+				# 매뉴얼 모드가 수동일 때만 failed로 변경
+				if MB.manual_mode:
+					LM.log_print(f"[TIMEOUT] {client_id} connecting timeout - setting to failed (manual mode)")
+					self.set_client_connection_failed(client_id)
+				else:
+					# 자동 모드일 때는 계속 깜빡임 유지
+					LM.log_print(f"[TIMEOUT] {client_id} connecting timeout - keeping blink (auto mode)")
+					# 깜빡임은 계속 유지되므로 별도 처리 불필요
+			
+			# 타임아웃 타이머 초기화
+			self.client_connecting_timers[idx] = None
+			
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id for timeout handling: {client_id}")
+
+	def set_client_connection_failed(self, client_id):
+		"""클라이언트 연결 실패 상태 설정"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+
+			# 깜빡임 중지
+			self.stop_client_blink(client_id)
+			
+			# connecting 타임아웃 중지
+			self._stop_connecting_timeout(client_id)
+			
+			# 실패 상태로 설정하고 실패 이미지 표시
+			self.client_connection_states[idx] = 'failed'
+			self.main_canvas.itemconfig(self.client_connect_complete_place_list[idx], 
+										image=self.client_connect_fail_image, state='normal')
+			LM.log_print(f"[FAILED] {client_id} connection failed (manual mode)")
+			
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id for failed state: {client_id}")
+
+	def set_client_model_load_complete(self, client_id):
+		"""클라이언트 모델 로드 완료 상태 설정"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+			
+			# 깜빡임 중지
+			self.stop_client_blink(client_id)
+			
+			# connecting 타임아웃 중지
+			self._stop_connecting_timeout(client_id)
+			
+			# 연결 완료 상태로 설정하고 정상 이미지 표시
+			self.client_connection_states[idx] = 'connected'
+			self.main_canvas.itemconfig(self.client_connect_complete_place_list[idx], 
+									   image=self.client_connect_complete_image, state='normal')
+			
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id for complete state: {client_id}")
+
+	def start_client_blink(self, client_id, duration=3000):
+		"""클라이언트 연결 상태 이미지 깜빡임 시작
+		Args:
+			client_id: 클라이언트 ID
+			duration: 깜빡임 지속 시간 (밀리초, -1이면 무한 깜빡임)
+		"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+			
+			# 기존 타이머가 있으면 취소
+			if self.client_blink_timers[idx]:
+				self.master.after_cancel(self.client_blink_timers[idx])
+			
+			# 깜빡임 상태 초기화
+			self.client_blink_states[idx] = False
+			
+			# 깜빡임 시작
+			self._blink_client_icon(idx, duration)
+			
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id for blink: {client_id}")
+
+	def stop_client_blink(self, client_id):
+		"""클라이언트 연결 상태 이미지 깜빡임 중지
+		Args:
+			client_id: 클라이언트 ID
+		"""
+		try:
+			idx = line_config['client_ids'].index(client_id)
+			
+			# 타이머 취소
+			if self.client_blink_timers[idx]:
+				self.master.after_cancel(self.client_blink_timers[idx])
+				self.client_blink_timers[idx] = None
+			
+			# 연결 상태에 따라 이미지 설정
+			if self.client_connection_states[idx] == 'disconnected':
+				# 연결 해제 상태면 숨김
+				self.client_blink_states[idx] = False
+				self.main_canvas.itemconfig(self.client_connect_complete_place_list[idx], state='hidden')
+			# connecting, failed, connected 상태는 각각의 함수에서 처리
+			
+		except ValueError:
+			LM.log_print(f"[ERROR] Invalid client_id for stop blink: {client_id}")
+
+	def _blink_client_icon(self, idx, duration):
+		"""클라이언트 아이콘 깜빡임 내부 함수
+		Args:
+			idx: 클라이언트 인덱스
+			duration: 남은 깜빡임 시간 (밀리초, -1이면 무한)
+		"""
+		if duration == 0:
+			# 깜빡임 종료
+			self.client_blink_timers[idx] = None
+			if self.client_connection_states[idx] == 'disconnected':
+				self.main_canvas.itemconfig(self.client_connect_complete_place_list[idx], state='hidden')
+			return
+		
+		# 깜빡임 상태 토글
+		self.client_blink_states[idx] = not self.client_blink_states[idx]
+		
+		# 이미지 표시/숨김
+		state = 'normal' if self.client_blink_states[idx] else 'hidden'
+		self.main_canvas.itemconfig(self.client_connect_complete_place_list[idx], state=state)
+		
+		# 다음 깜빡임 예약 (500ms 간격)
+		next_duration = duration - 500 if duration > 0 else -1
+		self.client_blink_timers[idx] = self.master.after(500, lambda: self._blink_client_icon(idx, next_duration))
+
+	def stop_all_client_blinks(self):
+		"""모든 클라이언트 깜빡임 중지"""
+		for client_id in line_config['client_ids']:
+			self.stop_client_blink(client_id)
+
+	def is_client_status_click(self, x, y):
+		"""클라이언트 상태 영역 클릭 여부 확인"""
+		# 클라이언트 상태 표시 영역 좌표들
+		client_areas = []
+		for i in range(client_num):
+			if i < 3:
+				# 상단 3개 클라이언트
+				client_areas.append((1071 + (i * 128), 31, 1071 + (i * 128) + 128, 31 + 42))
+			else:
+				# 하단 3개 클라이언트
+				client_areas.append((1071 + ((i - 3) * 128), 73, 1071 + ((i - 3) * 128) + 128, 73 + 42))
+		
+		# 클릭 위치가 어느 영역에 속하는지 확인
+		for area in client_areas:
+			if area[0] <= x <= area[2] and area[1] <= y <= area[3]:
+				return True
+		return False
+
+	def get_client_index_from_click(self, x, y):
+		"""클릭 위치에서 클라이언트 인덱스 반환"""
+		for i in range(client_num):
+			if i < 3:
+				# 상단 3개 클라이언트
+				if 1071 + (i * 128) <= x <= 1071 + (i * 128) + 128 and 31 <= y <= 31 + 42:
+					return i
+			else:
+				# 하단 3개 클라이언트
+				if 1071 + ((i - 3) * 128) <= x <= 1071 + ((i - 3) * 128) + 128 and 73 <= y <= 73 + 42:
+					return i
+		return None
+
+	def show_client_status_popup(self, client_idx):
+		"""클라이언트 상태 팝업 표시"""
+		# 기존 팝업이 있으면 닫기
+		if self.client_status_popup:
+			try:
+				self.client_status_popup.destroy()
+			except:
+				pass
+			self.client_status_popup = None
+		
+		# 클라이언트 ID 가져오기
+		if client_idx < len(line_config['client_ids']):
+			client_id = line_config['client_ids'][client_idx]
+		else:
+			return
+		
+		# 현재 상태 가져오기
+		current_state = self.client_connection_states[client_idx]
+		
+		# 팝업 생성
+		self.client_status_popup = tk.Toplevel(self)
+		self.client_status_popup.title(f"클라이언트 상태 - {client_id}")
+		self.client_status_popup.geometry("500x500")
+		self.client_status_popup.configure(bg='#2a5565')
+		
+		# 팝업이 닫힐 때 변수 초기화
+		def on_popup_close():
+			popup_to_destroy = self.client_status_popup
+			self.client_status_popup = None
+			popup_to_destroy.destroy()
+		
+		self.client_status_popup.protocol("WM_DELETE_WINDOW", on_popup_close)
+		
+		# 메인 프레임
+		main_frame = tk.Frame(self.client_status_popup, bg='#2a5565')
+		main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+		
+		# 제목
+		title_text = f"클라이언트: {client_id}"
+		if current_state == 'failed' and client_id in self.client_load_failures:
+			load_type = self.client_load_failures[client_id]
+			title_text += f" - {self.get_load_failure_title(load_type)}"
+		
+		title_label = tk.Label(main_frame, text=title_text, 
+							  font=('Malgun Gothic', 16, 'bold'), bg='#2a5565', fg='white')
+		title_label.pack(pady=(0, 20))
+		
+		# 상태 정보
+		status_frame = tk.Frame(main_frame, bg='#2a5565')
+		status_frame.pack(fill=tk.BOTH, expand=True)
+		
+		# 현재 상태
+		state_text = self.get_state_description(current_state)
+		state_color = self.get_state_color(current_state)
+		
+		state_label = tk.Label(status_frame, text=f"현재 상태: {state_text}", 
+							  font=('Malgun Gothic', 14, 'bold'), bg='#2a5565', fg=state_color)
+		state_label.pack(pady=10)
+		
+		# 상태별 상세 정보
+		detail_text = self.get_state_detail(client_id, current_state)
+		detail_label = tk.Label(status_frame, text=detail_text, 
+							   font=('Malgun Gothic', 12), bg='#2a5565', fg='white', 
+							   wraplength=350, justify=tk.LEFT)
+		detail_label.pack(pady=10)
+		
+		# 연결 정보
+		if client_id in SS.client_info:
+			connection_info = f"IP 주소: {SS.client_info[client_id]['addr'][0]}\n포트: {SS.client_info[client_id]['addr'][1]}"
+		else:
+			connection_info = "연결 정보 없음"
+		
+		info_label = tk.Label(status_frame, text=connection_info, 
+							 font=('Malgun Gothic', 11), bg='#2a5565', fg='#cccccc')
+		info_label.pack(pady=10)
+		
+		# 닫기 버튼
+		close_button = tk.Button(main_frame, text="닫기", command=on_popup_close,
+								font=('Malgun Gothic', 12, 'bold'), bg='#666666', fg='white')
+		close_button.pack(pady=20)
+
+	def get_state_description(self, state):
+		"""상태에 대한 설명 반환"""
+		state_descriptions = {
+			'disconnected': '연결 해제',
+			'connecting': '연결 중',
+			'failed': '검사 준비 실패',
+			'connected': '연결 완료'
+		}
+		return state_descriptions.get(state, '알 수 없음')
+
+	def get_state_color(self, state):
+		"""상태에 대한 색상 반환"""
+		state_colors = {
+			'disconnected': '#cccccc',
+			'connecting': '#ffff00',  # 노란색
+			'failed': '#ff4444',      # 빨간색
+			'connected': '#44ff44'    # 초록색
+		}
+		return state_colors.get(state, '#ffffff')
+
+	def get_state_detail(self, client_id, state):
+		"""상태별 상세 정보 반환"""
+		if state == 'disconnected':
+			return "클라이언트가 연결되지 않았습니다.\n클라이언트 프로그램을 실행하고 연결을 시도해주세요."
+		
+		elif state == 'connecting':
+			return "클라이언트가 연결되어 모델을 로드하고 있습니다.\n잠시 기다려주세요."
+		
+		elif state == 'failed':
+			# 구체적인 로드 실패 정보 확인
+			if client_id in self.client_load_failures:
+				load_type = self.client_load_failures[client_id]
+				return self.get_load_failure_detail(load_type)
+			else:
+				return "검사 준비를 실패했습니다.\n가능한 원인:\n• 모델 로드 실패\n• 네트워크 연결 문제\n• 클라이언트 프로그램 오류\n\n클라이언트를 재시작하고 다시 연결을 시도해주세요."
+		
+		elif state == 'connected':
+			return "클라이언트가 정상적으로 연결되어 있습니다.\n모델 로드가 완료되어 검사 준비가 되었습니다."
+		
+		else:
+			return "알 수 없는 상태입니다."
+
+	def get_load_failure_detail(self, load_type):
+		"""로드 실패 타입별 상세 정보 반환"""
+		failure_details = {
+			'classi_masking': "원인:\n• 마스킹 이미지 파일이 존재하지 않음\n• 마스킹 이미지 파일 형식 오류\n• 마스킹 이미지 파일 경로 오류\n\n해결 방법:\n• 마스킹 이미지 파일 확인\n• 파일 경로 및 형식 확인\n• 클라이언트 재시작",
+			
+			'classi_model': "원인:\n• 모델 파일이 존재하지 않음\n• 모델 파일 형식 오류\n• 모델 파일 경로 오류\n\n해결 방법:\n• 모델 파일 용량 확인\n• 모델 파일 경로 확인\n• 클라이언트 재시작",
+			
+			'det_masking': "원인:\n• 마스킹 이미지 파일이 존재하지 않음\n• 마스킹 이미지 파일 형식 오류\n• 마스킹 이미지 파일 경로 오류\n\n해결 방법:\n• 마스킹 이미지 파일 확인\n• 파일 경로 및 형식 확인\n• 클라이언트 재시작",
+			
+			'det_model': "원인:\n• 모델 파일이 존재하지 않음\n• 모델 파일 형식 오류\n• 모델 파일 경로 오류\n\n해결 방법:\n• 모델 파일 용량 확인\n• 모델 파일 경로 확인\n• 클라이언트 재시작"
+		}
+		
+		return failure_details.get(load_type, f"알 수 없는 로드 실패: {load_type}\n\n클라이언트를 재시작하고 다시 시도해주세요.")
+
+	def get_load_failure_title(self, load_type):
+		"""로드 실패 타입별 제목 반환"""
+		failure_titles = {
+			'classi_masking': '분류 마스킹 로드 실패',
+			'classi_model': '분류 모델 로드 실패',
+			'det_masking': '디텍션 마스킹 로드 실패',
+			'det_model': '디텍션 모델 로드 실패'
+		}
+		
+		return failure_titles.get(load_type, f'알 수 없는 실패: {load_type}')
+	
+	# -------------------- 카메라별 불량 수량 확인 -------------------- #
+
+	def toggle_ng_statistics_mode(self):
+		"""불량 수량 확인 모드 토글"""
+		if self.ng_statistics_mode:
+			self.exit_ng_statistics_mode()
+		else:
+			self.enter_ng_statistics_mode()
+
+	def enter_ng_statistics_mode(self):
+		"""불량 수량 확인 모드 시작"""
+		self.ng_statistics_mode = True
+		self.main_canvas.itemconfig(self.main_frame_btn_place, state='normal')
+		self.main_canvas.itemconfig(self.camera_ng_count_check_btn_place, state='normal')
+		
+		# 기존 검사 이미지들 숨기기
+		for i in range(client_num):
+			self.main_canvas.itemconfig(self.show_place_list[i], state='hidden')
+			self.main_canvas.itemconfig(self.ok_sign_place_list[i], state='hidden')
+			self.main_canvas.itemconfig(self.ng_sign_place_list[i], state='hidden')
+		
+		# 불량 수량 생성 및 표시
+		self.show_ng_statistics()
+
+	def exit_ng_statistics_mode(self):
+		"""불량 수량 확인 모드 종료"""
+		self.ng_statistics_mode = False
+		self.main_canvas.itemconfig(self.main_frame_btn_place, state='hidden')
+		self.main_canvas.itemconfig(self.camera_ng_count_check_btn_place, state='hidden')
+
+		# 불량 수량 확인 리스트박스들 완전 제거
+		if hasattr(self, 'statistics_listboxes'):
+			for listbox in self.statistics_listboxes:
+				try:
+					listbox.destroy()
+				except:
+					pass
+			self.statistics_listboxes = []
+		
+		# 불량 수량 확인 프레임들 완전 제거
+		if hasattr(self, 'statistics_frames'):
+			for frame in self.statistics_frames:
+				try:
+					frame.destroy()
+				except:
+					pass
+			self.statistics_frames = []
+		
+		# 원래 이미지로 복원
+		HW.display_results_images(HW.station4_dict)  # 마지막 결과 다시 표시
+
+	def show_ng_statistics(self):
+		"""불량 수량 리스트박스로 표시"""
+		try:
+			# 기존 불량 수량 리스트박스들 제거
+			if hasattr(self, 'statistics_listboxes'):
+				for listbox in self.statistics_listboxes:
+					try:
+						# 리스트박스의 부모 프레임까지 모두 제거
+						parent = listbox.master
+						if parent:
+							parent.destroy()
+					except:
+						pass
+			
+			self.statistics_listboxes = []
+			self.statistics_frames = []
+			
+			# 각 클라이언트별로 개별 불량 수량 생성 및 표시
+			for i, client_id in enumerate(line_config['client_ids']):
+				# 해당 클라이언트의 불량 수량 데이터 가져오기
+				client_statistics = self.get_client_ng_statistics_data(client_id)
+				
+				# 리스트박스 생성
+				listbox, frame = self.create_statistics_listbox(client_statistics, client_id, i)
+				self.statistics_listboxes.append(listbox)
+				self.statistics_frames.append(frame)
+				
+		except Exception as e:
+			LM.log_print(f"[ERROR] Failed to show NG statistics: {str(e)}")
+			import traceback
+			traceback.print_exc()
+
+	def create_statistics_listbox(self, statistics_data, client_id, position):
+		"""특정 클라이언트의 불량 수량 표시할 리스트박스 생성"""
+		try:
+			# 클라이언트 이름
+			client_name = model_info['models'][MB.model_name][client_id]['name']
+			
+			# 리스트박스 프레임 생성 (크기 고정)
+			frame = tk.Frame(self.main_canvas, bg='#2a5565', relief=tk.RAISED, bd=2, width=391, height=290)
+			frame.pack_propagate(False)  # 프레임 크기 고정
+			
+			# 프레임 위치 계산 (기존 이미지 위치와 동일)
+			if position < 3:
+				x_pos = 96 + (position * 441)
+				y_pos = 140
+			else:
+				x_pos = 96 + ((position - 3) * 441)
+				y_pos = 553
+			
+			# 프레임을 캔버스에 배치
+			self.main_canvas.create_window(x_pos, y_pos, window=frame, anchor="nw")
+			
+			# 제목 라벨
+			title_label = tk.Label(frame, text=f"{client_name}", 
+								  font=('Malgun Gothic', 14, 'bold'), 
+								  bg='#2a5565', fg='white')
+			title_label.pack(pady=(5, 0))
+			
+			# 리스트박스와 스크롤바를 담을 프레임
+			list_frame = tk.Frame(frame, bg='#2a5565')
+			list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+			
+			# 리스트박스 생성 (크기 조정)
+			listbox = tk.Listbox(list_frame, font=('Malgun Gothic', 10), 
+								bg='#2a5565', fg='white', 
+								selectmode='none', 
+								height=12, width=45,
+								relief=tk.FLAT, bd=0)
+			listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+			
+			# 스크롤바 추가
+			scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
+			scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+			listbox.config(yscrollcommand=scrollbar.set)
+			
+			# 불량 수량 데이터 추가
+			listbox.insert(tk.END, f"총 불량: {statistics_data['total_ng']}개")
+			listbox.insert(tk.END, f"중대불량: {statistics_data['critical_ng']}개")
+			listbox.insert(tk.END, f"일반불량: {statistics_data['normal_ng']}개")
+			
+			# 구분선 추가
+			if statistics_data['label_ng']:
+				listbox.insert(tk.END, "")
+				listbox.insert(tk.END, "─" * 35)  # 구분선 길이 조정
+				listbox.insert(tk.END, "")
+				
+				# 라벨별 불량 수량 추가 (개수 순으로 정렬)
+				for label, count in sorted(statistics_data['label_ng'].items(), key=lambda x: x[1], reverse=True):
+					if count > 0:
+						# 라벨의 한글 이름 찾기
+						korean_name = label
+						if client_id in model_info['models'][MB.model_name]:
+							if label in model_info['models'][MB.model_name][client_id]['label_ng_conditions']:
+								korean_name = model_info['models'][MB.model_name][client_id]['label_ng_conditions'][label][0]
+						
+						listbox.insert(tk.END, f"{korean_name}: {count}개")
+			
+			return listbox, frame
+			
+		except Exception as e:
+			LM.log_print(f"[ERROR] Failed to create statistics listbox for {client_id}: {str(e)}")
+			import traceback
+			traceback.print_exc()
+			return None, None
+
+	def get_client_ng_statistics_data(self, client_id):
+		"""특정 클라이언트의 불량 수량 데이터 가져오기"""
+		statistics = {
+			'total_ng': 0,
+			'critical_ng': 0,
+			'normal_ng': 0,
+			'label_ng': {}
+		}
+		
+		try:
+			# 전체 불량 개수 (reset_time 이후)
+			critical_results = DB.read_result('critical_results', self.reset_time, limit=99999)
+			normal_results = DB.read_result('normal_results', self.reset_time, limit=99999)
+			
+			# 해당 클라이언트의 라벨별 불량 개수 초기화
+			if client_id in model_info['models'][MB.model_name]:
+				for label in model_info['models'][MB.model_name][client_id]['label_ng_conditions']:
+					statistics['label_ng'][label] = 0
+			
+			# 미검사&오류 카운트 추가
+			statistics['label_ng']['미검사'] = 0
+			statistics['label_ng']['오류'] = 0
+			
+			# 결과 데이터에서 해당 클라이언트의 불량 개수 계산
+			for table_name, results in [('critical_results', critical_results), ('normal_results', normal_results)]:
+				for row in results:
+					result_column = f"{client_id}_result"
+					if result_column in row and row[result_column]:
+						result_value = str(row[result_column]).upper()
+						if result_value == 'NONE':
+							statistics['label_ng']['미검사'] += 1
+							statistics['normal_ng'] += 1
+							statistics['total_ng'] += 1
+						elif 'ERROR' in result_value:
+							statistics['label_ng']['오류'] += 1
+							statistics['normal_ng'] += 1
+							statistics['total_ng'] += 1
+						elif ':' in result_value:
+							part_name, label = result_value.split(':', 1)
+							if 'OK' not in label:
+								# 전체 카운트
+								if table_name == 'critical_results':
+									statistics['critical_ng'] += 1
+								else:
+									statistics['normal_ng'] += 1
+								statistics['total_ng'] += 1
+								
+								# 라벨별 카운트
+								if label in statistics['label_ng']:
+									statistics['label_ng'][label] += 1
+			
+		except Exception as e:
+			LM.log_print(f"[ERROR] Failed to get client NG statistics data for {client_id}: {str(e)}")
+		
+		return statistics
+
+
+# ▶ 메인 - 클라이언트 소켓 서버 클래스 
+class SocketServer:
+	def __init__(self, host, port):
+		self.host = host
+		self.port = port
+		self.client_info = {}
+		self.connect_complete = False
+		self.db_saveQ = MQueue()  # DB저장용 큐
+		
+		self.message_queue = MQueue()  # 메시지 전송용 큐
+		self.message_thread = None  # 메시지 전송 스레드
+		
+		# 라인 설정 로드
+		self.client_map = line_config['ip_map']  # 클라이언트 IP 맵핑
+		self.load_complete_check_dict = create_bool_dict(line_config['client_ids'], False)  # 로드 완료 확인용 딕셔너리
+		self.result_dict = create_result_dict(line_config['client_ids'])  # 검사 결과 딕셔너리
+		self.gpu_avail_dict = create_bool_dict(line_config['client_ids'], True)  # GPU 사용 가능 여부 딕셔너리
+		
+		self.create_server()
+
+	def create_server(self) : 
+		"""소켓 서버 생성"""
+		while True :
+			try :
+				self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+				self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+				self.server_socket.bind((self.host, self.port))
+				self.server_socket.listen(5)
+				self.client_connecting_start_time = time.time()
+				LM.log_print(f"[SOCKET] Main-Client Connecting Start: {self.host}:{self.port}")
+				break
+			except:
+				LM.log_print(f"[SOCKET] Main-Client Connecting Failed: {traceback.format_exc()}")
+				time.sleep(1)
+
+	def message_sender(self):
+		"""메시지 전송 스레드 - 큐에서 메시지를 순차적으로 전송"""
+		while True:
+			try:
+				try:
+					message_data = self.message_queue.get(timeout=1)
+				except:
+					continue  # 타임아웃 시 다시 대기
+				
+				client_id = message_data['client_id']
+				msg = message_data['message']
+				
+				# 실제 메시지 전송
+				self._send_message_internal(client_id, msg)
+				
+			except Exception as e:
+				LM.log_print(f"[SOCKET] Message sender error: {str(e)}")
+				time.sleep(0.1)
+
+	def _send_message_internal(self, client_id, msg):
+		"""내부 메시지 전송 함수 (스레드 안전)"""
+		try:
+			msg_encoded = msg.encode('utf-8') 
+			msg_length = len(msg_encoded)
+			length_info = msg_length.to_bytes(4, byteorder='big')
+
+			if client_id == 'all':
+				for client_id, client_info in self.client_info.items():
+					try:
+						client_socket = client_info['socket']
+						client_socket.send(length_info)
+						client_socket.send(msg_encoded)
+					except Exception as e:
+						LM.log_print(f'[SOCKET] Failed to send to {client_id}: {str(e)}')
+			else:
+				if client_id in self.client_info:
+					client_socket = self.client_info[client_id]['socket']
+					client_socket.send(length_info)
+					client_socket.send(msg_encoded)
+				else:
+					LM.log_print(f'[SOCKET] Client {client_id} not found in client_info')
+					
+		except Exception as e:
+			LM.log_print(f'[SOCKET] Message send failed for {client_id}: {str(e)}')
+
+	def connect_thread(self):
+		"""클라이언트 소켓 연결 스레드"""
+		while True:
+			try:
+				if not self.connect_complete:
+					LM.log_print("[SOCKET] Main-Client Connecting Start")
+					client_socket, addr = self.server_socket.accept()
+					client_ip = addr[0]
+					client_id = self.client_map[client_ip]
+					self.client_info[client_id] = {"socket": client_socket, "addr": addr}
+					threading.Thread(target=self.recv_from_client, args=(client_socket, client_id), daemon=True).start()
+					LM.log_print(f"[SOCKET] Main-Client Connecting Complete: {client_id}-{client_ip}")
+					MF.connect_complete_check(client_id, True)
+					
+					if len(self.client_info) == 1:  # 테스트용 > client_num 으로 변경
+						self.connect_complete = True
+						if MB.model_name:  # 모든 클라이언트 연결완료되었는데 모델 번호가 존재할 때 = 재연결
+							LM.log_print(f"[SOCKET] Sending model load signals to reconnected clients")
+							self.send_json_and_model(client_id)
+				else:
+					time.sleep(1)
+			except:
+				LM.log_print(f'[SOCKET] Main-Client Connecting Failed: {traceback.format_exc()}')
+				time.sleep(1)
+
+	def send_json(self, client_id=None):
+		"""클라이언트로 JSON 파일 전송"""
+		# 전송할 클라이언트 목록 결정
+		target_clients = line_config['client_ids'] if client_id is None else [client_id]
+		
+		for target_id in target_clients:
+			msg = model_info['models'][MB.model_name][target_id]
+			json_string = f'json:{json.dumps(msg, ensure_ascii=False)}'
+
+			# 큐에 메시지 추가
+			self.message_queue.put({
+				'client_id': target_id,
+				'message': json_string
+			})
+			LM.log_print(f"[SOCKET] JSON queued for {target_id}")
+	
+	def send_json_and_model(self, client_id=None):
+		"""모델 로드 신호 전송 : Json과 model 동시 전송"""
+		# 전송할 클라이언트 목록 결정
+		target_clients = line_config['client_ids'] if client_id is None else [client_id]
+		
+		for target_id in target_clients:
+			json_data = model_info['models'][MB.model_name][target_id]
+			json_string = json.dumps(json_data, ensure_ascii=False)
+			msg = f'model:{MB.model_name}:{json_string}'
+
+			# 큐에 메시지 추가
+			self.message_queue.put({
+				'client_id': target_id,
+				'message': msg
+			})
+			LM.log_print(f"[SOCKET] JSON queued for {target_id}")
+
+	def send_msg_to_client(self, msg, client_id=None):
+		"""클라이언트에게 메시지 전송 (큐를 통해)"""
+		# 전송할 클라이언트 목록 결정
+		target_clients = line_config['client_ids'] if client_id is None else [client_id]
+
+		for target_id in target_clients:
+			self.message_queue.put({
+				'client_id': target_id,
+				'message': msg
+			})
+			LM.log_print(f"[SOCKET] Message queued for {target_id}: {msg[:10]}...")
+
+	def recvall(self, sock, count):
+		"""데이터 수신"""
+		buf = b""
+		while count:
+			newbuf = sock.recv(count)
+			if not newbuf:
+				return None
+			buf += newbuf
+			count -= len(newbuf)
+		return buf
+	
+	def recv_from_client(self, client_socket, client_id):
+		"""클라이언트 프로그램으로부터 데이터 수신"""
+		while True:
+			try:
+				time.sleep(0.005)
+				header = self.recvall(client_socket, 4)
+				if not header:
+					LM.log_print(f"[SOCKET] {client_id} Header Not Received")
+					break
+
+				data_length = int.from_bytes(header, 'big')  # 데이터 길이 추출
+				data = self.recvall(client_socket, data_length)  # 실제 데이터 수신
+
+				if data:
+					recvData = data.decode().strip()
+					print(f"[SOCKET] {client_id} Response: {recvData}")
+				else:
+					LM.log_print(f"[SOCKET] {client_id} Connection Lost")
+					break
+					
+				if recvData == 'model_load_complete':  # 모델 로드 완료 수신
+					LM.log_print(f"[SOCKET] {client_id} Model Load Complete")
+					MF.set_client_model_load_complete(client_id)  # 연결 완료 상태로 설정
+					self.load_complete_check_dict[client_id] = True
+					if all(self.load_complete_check_dict.values()):
+						MB.modbus_queue.put({"mode": "ready"})
+						LM.log_print(f"[SOCKET] All Client Model Load Complete")
+				
+				elif 'update_labels' in recvData:  # 라벨 업데이트 수신
+					add_labels = recvData.split('|')[1]
+					remove_labels = recvData.split('|')[2]
+					LM.log_print(f"[UPDATE] {client_id}: add labels: {add_labels} | remove labels: {remove_labels}")
+					HW.update_labels(client_id, add_labels, remove_labels)
+					self.send_json(client_id)
+				
+				elif 'load' in recvData:
+					load_type = recvData.split(':')[1]
+					result = recvData.split(':')[2]
+					if result == 'fail':
+						LM.log_print(f"[ERROR] {client_id} {load_type} Failed")
+						MF.client_load_failures[client_id] = load_type
+						self.load_complete_check_dict[client_id] = False
+						MF.set_client_connection_failed(client_id)  # 연결 실패 상태로 설정
+					else:
+						# 로드 성공 시 실패 정보 제거
+						if client_id in MF.client_load_failures:
+							del MF.client_load_failures[client_id]
+				
+				elif 'result' in recvData:  # 검사 결과 수신
+					result_part = recvData.split(':')[1]
+					result_label = recvData.split(':')[2]
+					cycle_time = time.time() - MB.inspection_start_time
+					LM.log_print(f"[RESULT] {client_id}: {result_part} - {result_label} Received (Cycle Time: {cycle_time:.2f}s)")
+					self.result_dict[client_id]['part'] = result_part
+					self.result_dict[client_id]['label'] = result_label
+
+					length_bytes = self.recvall(client_socket, 4)
+					if length_bytes:
+						data_length = int.from_bytes(length_bytes, 'big')
+						binData = self.recvall(client_socket, data_length)
+						if binData:
+							try:
+								recv_image = pickle.loads(binData)
+								self.result_dict[client_id]['image'] = recv_image
+							except:
+								LM.log_print(f"[ERROR] {client_id} image unpickling error : {traceback.format_exc()}")
+								return
+					
+					HW.analysis_result()  # 검사 결과 종합 시도
+
+				elif 'recent' in recvData:  # 최근 검사 결과 수신 ex) recent:ng:part_name:label
+					recent_type = recvData.split(':')[1]  # ng, ok, origin
+					recent_part = recvData.split(':')[2]  # 라벨명, engrave(각인)
+					recent_label = recvData.split(':')[3]
+
+					length_bytes = self.recvall(client_socket, 4)
+					if length_bytes:
+						data_length = int.from_bytes(length_bytes, 'big')
+						binData = self.recvall(client_socket, data_length)
+						if binData:
+							try:
+								recv_image = pickle.loads(binData)
+							except:
+								LM.log_print(f"[ERROR] {client_id} image unpickling error : {traceback.format_exc()}")
+								return
+							if recent_type == 'origin':  # 원본 이미지
+								is_origin_image = self.check_origin_image(client_id)
+								if is_origin_image:  # 원본 이미지 존재 시 원본 이미지 전송 중지
+									SS.message_queue.put({
+										'client_id': client_id,
+										'message': f'recent:origin:stop'
+									})
+								else:  # 원본 이미지 없으면 원본 이미지 전송 시작
+									SS.message_queue.put({
+										'client_id': client_id,
+										'message': f'recent:origin:start'
+									})
+									self.save_recent_image_and_remove_oldest(client_id, recent_type, recent_part, recent_label, recv_image)
+							else:  # 각인 불량, 불량 이미지 저장
+								self.save_recent_image_and_remove_oldest(client_id, recent_type, recent_part, recent_label, recv_image)
+							
+			
+				elif 'gpu_available' in recvData:
+					gpu_available = recvData.split(':')[1]
+					if gpu_available == 'True':
+						self.gpu_avail_dict[client_id] = True
+					else:
+						self.gpu_avail_dict[client_id] = False
+					
+			except:
+				LM.log_print(f"[SOCKET] {client_id} Communication Error: {traceback.format_exc()}")
+				break
+			
+		# 연결 제거
+		if client_id in self.client_info:
+			del self.client_info[client_id]
+		client_socket.close()
+		LM.log_print(f"[SOCKET] {client_id} Connection Closed")
+		MF.connect_complete_check(client_id, False)
+		self.connect_complete = False
+		self.load_complete_check_dict[client_id] = False
+
+	def save_recent_image_and_remove_oldest(self, client_id, recent_type, recent_part, recent_label, recv_image):
+		"""최근 검사 이미지 저장 및 가장 오래된 이미지 제거"""
+		if recent_type == 'origin':
+			save_path = os.path.join('recent_images', MB.model_name, client_id, recent_type)
+		else:
+			save_path = os.path.join('recent_images', MB.model_name, client_id, recent_part, recent_type)
+
+		if recent_type == 'origin':
+			img_name = f"{recent_type}.jpg"
+		else:
+			timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
+			if recent_part == 'engrave':
+				img_name = f"engrave-{timestamp}.jpg"
+			else:
+				img_name = f"{recent_label}-{timestamp}.jpg"
+		
+		if recv_image is None:
+			print(f"[ERROR] recv_image is None")
+			return
+		
+		# 이미지 데이터 유효성 검사
+		if hasattr(recv_image, 'shape'):
+			if len(recv_image.shape) != 3 or recv_image.shape[2] != 3:
+				print(f"[ERROR] Invalid image shape: {recv_image.shape}")
+				return
+			if recv_image.min() < 0 or recv_image.max() > 255:
+				print(f"[ERROR] Invalid image values: min={recv_image.min()}, max={recv_image.max()}")
+				return
+
+		if not os.path.exists(save_path):
+			try:
+				os.makedirs(save_path)
+			except Exception as e:
+				print(f"[ERROR] Failed to create directory {save_path}: {e}")
+				return
+
+		all_files = [os.path.join(save_path, f) for f in os.listdir(save_path) if os.path.isfile(os.path.join(save_path, f))]
+		
+		if len(all_files) > 200:
+			all_files.sort(key=os.path.getctime)
+			try:
+				os.remove(all_files[0])
+				print(f"Removed oldest file: {all_files[0]}")
+			except Exception as e:
+				print(f"[ERROR] Failed to remove oldest file: {e}")
+		
+		# 이미지 저장 (PIL 사용 - 한글 경로 지원)
+		full_path = os.path.join(save_path, img_name)
+
+		try:
+			rgb_image = cv2.cvtColor(recv_image, cv2.COLOR_BGR2RGB)
+			pil_image = Image.fromarray(rgb_image)
+			pil_image.save(full_path, 'JPEG', quality=95)
+		except Exception as e:
+			print(f"[ERROR] PIL save failed: {e}")
+
+	def check_origin_image(self, client_id):
+		"""원본 이미지 존재 여부 확인"""
+		save_path = f'recent_images/{MB.model_name}/{client_id}/origin'
+		if os.path.exists(save_path):
+			for file in os.listdir(save_path):
+				if file.lower().endswith('.jpg'):
+					return True
+		return False
+
+# ▶ PLC(모드 버스) 통신 클래스
+class Modbus:
+	def __init__(self):
+		self.modbus_device = None
+		self.is_connected = False
+		self.first_trigger = False
+		
+		# PLC 설정
+		self.host = "192.168.50.55"  # PLC IP 주소 "192.168.0.2"
+		self.port = 9999              # Modbus TCP 포트 "502"
+		self.timeout = 5             # 연결 타임아웃
+		
+		# Modbus 주소 설정
+		self.default_recv_address = 0  # 기본 수신 주소
+		self.recv_modbus_signal = [0] * 10  # 수신 신호
+		self.changed_modbus_signal = [False] * 10  # 변경 신호
+		
+		self.modbus_queue = MQueue()  # Modbus 명령 큐
+
+		self.model_number = None  # 모델 번호
+		self.model_name = None  # 모델 이름
+		self.manual_mode = False  # 라인 모드 수동 여부
+		self.result_request = False  # 검사 결과 요청 신호
+		self.inspection_start_time = 0  # 검사 시작 시간
+		
+		self.connect_modbus()
+
+	def connect_modbus(self):
+		"""모드버스 연결"""
+		while True:
+			try:
+				# 기존 연결 정리
+				if self.modbus_device:
+					try:
+						self.modbus_device.close()
+					except:
+						pass
+				
+				# 새 연결 생성
+				self.modbus_device = ModbusTcpClient(
+					host=self.host, 
+					port=self.port, 
+					timeout=self.timeout
+				)
+				
+				# 실제 연결 시도
+				if not self.modbus_device.connect():
+					raise Exception(f"Modbus connection failed: {self.host}:{self.port}")
+			
+				# 초기 신호 전송
+				if not self.first_trigger:
+					self.modbus_queue.put({"mode": "reset"})
+					self.first_trigger = True
+				
+				self.modbus_queue.put({"mode": "reconnect"})
+				self.modbus_queue.put({"mode": "alive", "value": 1})
+				
+				self.is_connected = True
+				LM.log_print(f"[PLC] Connected to {self.host}:{self.port}")
+				return
+				
+			except Exception as e:
+				self.is_connected = False
+				LM.log_print(f"[PLC] Connection failed: {e}")
+				time.sleep(1)
+
+	def read_signal_thread(self):
+		"""PLC 신호 읽기 스레드"""
+		cycle_check_count = 0
+		while True:
+			try:
+				time.sleep(0.1)
+				
+				# 연결 상태 확인
+				if not self.modbus_device or not self.is_connected:
+					time.sleep(0.1)
+					continue
+				
+				# PLC 데이터 읽기
+				try:
+					values = self.modbus_device.read_holding_registers(self.default_recv_address, count=10)
+					value_list = values.registers
+				except:
+					LM.log_print(f"[PLC] Read error: {traceback.format_exc()}")
+					self.is_connected = False
+					self.connect_modbus()
+					continue
+				
+				# 데이터 변경 감지
+				for i in range(len(self.recv_modbus_signal)):
+					if self.recv_modbus_signal[i] != value_list[i]:
+						self.recv_modbus_signal[i] = value_list[i]
+						self.changed_modbus_signal[i] = True
+				
+				# PC Alive 1초 마다 전송(time.sleep(0.1))
+				cycle_check_count += 1
+				if cycle_check_count >= 10:  # 0.1초 * 10 = 1초
+					cycle_check_count = 0
+					self.modbus_queue.put({"mode": "alive", "value": 1})
+				
+				# PLC Alive 신호 체크
+				if self.changed_modbus_signal[0]:
+					if self.recv_modbus_signal[0] == 1:
+						LM.log_print("[PLC] Alive ON")
+					elif self.recv_modbus_signal[0] == 0:
+						LM.log_print("[PLC] Alive OFF")
+					self.changed_modbus_signal[0] = False
+
+				# 라인 모드 변경 신호 1: 자동 / 2: 수동
+				if self.changed_modbus_signal[2]:
+					self.changed_modbus_signal[2] = False
+					if self.recv_modbus_signal[2] == 1:
+						self.manual_mode = False
+						LM.log_print("[PLC] Line mode: Auto")
+					elif self.recv_modbus_signal[2] == 2:
+						self.manual_mode = True
+						LM.log_print("[PLC] Line mode: Manual")
+
+				# 모델 변경 신호
+				if self.changed_modbus_signal[1]:
+					# 모든 클라이언트 연결 완료 전 or 수동 모드 아닌 경우 모델 변경 방지
+					if not SS.connect_complete or not self.manual_mode:
+						continue
+					
+					self.changed_modbus_signal[1] = False
+					if self.recv_modbus_signal[1] == 0:  # 0번 모델 변경 방지
+						continue
+					
+					self.model_number = str(self.recv_modbus_signal[1])
+					try:
+						self.model_name = model_info['model_mapping'][self.model_number]
+					except:
+						LM.log_print(f"[PLC] Model number {self.model_number} not found in model_info")
+						messagebox.showerror("모델 변경 에러", f"모델 {self.model_number}번에 대한 등록된 정보가 없습니다.\n관리자모드에서 {self.model_number}번 모델을 추가해주세요.")
+						continue
+
+					LM.log_print(f"[PLC] Model change order: {self.model_number}, Model name: {self.model_name}")
+
+					self.modbus_queue.put({"mode": "model", "value": self.recv_modbus_signal[1]})
+					self.modbus_queue.put({"mode": "busy"})
+
+					# 1. 모든 클라이언트 로드 완료 확인
+					for client_id in line_config['client_ids']:
+						MF.connect_complete_check(client_id, True)
+
+					# 2. JSON, 모델 정보 전송
+					SS.send_json_and_model()
+
+					# 3. 메인 프레임 설정
+					MF.main_canvas.itemconfig(MF.model_name_place, text=f"{self.model_name}")
+					MF.read_current_state()
+					MF.update_result_log()
+					
+				# 검사 시작 신호
+				if self.changed_modbus_signal[3]:
+					self.changed_modbus_signal[3] = False
+					if self.recv_modbus_signal[3] == 1:
+						LM.log_print("[PLC] Inspection start")
+						HW.reset_variables()
+						SS.send_msg_to_client("start")
+						self.inspection_start_time = time.time()
+						self.modbus_queue.put({"mode": "busy"})
+						self.modbus_queue.put({"mode": "state", "value": 1})
+				
+				# [4], [5] - 미사용
+
+				# 검사 결과 요청 신호
+				if self.changed_modbus_signal[6]:
+					self.changed_modbus_signal[6] = False
+					if self.recv_modbus_signal[6] == 1:
+						self.result_request = True
+						HW.analysis_result()
+						self.modbus_queue.put({"mode": "result_session", "value": 1})
+						LM.log_print("[PLC] Inspection result request")
+				
+				# PLC 확인 완료 신호
+				if self.changed_modbus_signal[7]:
+					self.changed_modbus_signal[7] = False
+					if self.recv_modbus_signal[7] == 1:
+						LM.log_print("[PLC] PLC check complete")
+						self.modbus_queue.put({"mode": "ready"})
+						self.modbus_queue.put({"mode": "result_session", "value": 0})
+						self.modbus_queue.put({"mode": "result1", "value": 0})
+						self.modbus_queue.put({"mode": "result2", "value": 0})
+						self.modbus_queue.put({"mode": "state", "value": 0})
+				
+				# 비전 명령 1: 비전 초기화/ 2: 카운트 리셋/ 3: PC 재실행 / 4: x / 5: 불량 이력 초기화
+				if self.changed_modbus_signal[8]:
+					self.changed_modbus_signal[8] = False
+					if self.recv_modbus_signal[8] == 1:
+						LM.log_print("[PLC] Vision reset")
+						self.modbus_queue.put({"mode": "busy"})
+						self.modbus_queue.put({"mode": "state", "value": 4})
+						# 작업 구현(미사용)
+
+						self.modbus_queue.put({"mode": "ready"})
+						self.modbus_queue.put({"mode": "state", "value": 0})
+
+					elif self.recv_modbus_signal[8] == 2:
+						LM.log_print("[PLC] Vision count reset")
+						self.modbus_queue.put({"mode": "busy"})
+						self.modbus_queue.put({"mode": "state", "value": 4})
+						
+						MF.count_reset('RESET')
+						MF.clear_ng_log_listboxes()
+
+						self.modbus_queue.put({"mode": "ready"})
+						self.modbus_queue.put({"mode": "state", "value": 0})
+
+					elif self.recv_modbus_signal[8] == 3:
+						LM.log_print("[PLC] PC reboot")
+						SS.send_msg_to_client("reboot")
+						os.system("shutdown -r") 
+					
+					elif self.recv_modbus_signal[8] == 5:
+						LM.log_print("[PLC] NG log reset")
+						self.modbus_queue.put({"mode": "busy"})
+						self.modbus_queue.put({"mode": "state", "value": 4})
+
+						MF.count_reset('NG_RESET')
+						MF.clear_ng_log_listboxes()
+
+						self.modbus_queue.put({"mode": "ready"})
+						self.modbus_queue.put({"mode": "state", "value": 0})
+
+			except:
+				LM.log_print(f"[MODBUS] Main loop error: {traceback.format_exc()}")
+				self.is_connected = False
+				time.sleep(1)
+
+	def send_signal_thread(self):
+		"""PLC 신호 전송 스레드"""
+		while True:
+			if not self.modbus_device or not self.is_connected:
+				time.sleep(0.1)
+				continue
+			
+			try:
+				command = self.modbus_queue.get(timeout=1)
+			except:
+				continue
+
+			try:
+				mode = command['mode']
+				idx = command.get('value', 0)
+				if mode != 'alive':
+					LM.log_print(f"[PLC] Signal sent: {mode}, Value: {idx}")
+				
+				if mode == "reset":  # 초기화
+					self.modbus_device.write_registers(address=200, values=[0,0,0,0,0,0,0,0,0,0,0])
+					
+				elif mode == "reboot":  # 재부팅
+					self.modbus_device.write_registers(address=200, values=[0,0,0,0,0,0,0,0,0,2,0])
+					
+				elif mode == "alive":  # 연결 확인
+					self.modbus_device.write_register(address=200, value=idx)
+					
+				elif mode == "model":  # 모델 번호
+					self.modbus_device.write_register(address=201, value=idx)
+					
+				elif mode == "line_mode":  # 라인 모드 # 1: 자동 / 2: 수동
+					self.modbus_device.write_register(address=202, value=idx)
+					
+				elif mode == "ready":  # 준비 완료
+					self.modbus_device.write_register(address=203, value=1)
+					self.modbus_device.write_register(address=204, value=0)
+					
+				elif mode == "busy":  # 작업중
+					self.modbus_device.write_register(address=203, value=0)
+					self.modbus_device.write_register(address=204, value=1)
+					
+				elif mode == "result_session":  # 결과 종합
+					self.modbus_device.write_register(address=205, value=idx)
+					
+				elif mode == "station1_result":  # 1번 스테이션 결과  # 1:중대불량 /2:일반불량 /3:양품 /4:데이터없음
+					self.modbus_device.write_register(address=206, value=idx)
+					
+				elif mode == "station4_result":  # 4번 스테이션 결과  # 1:중대불량 /2:일반불량 /3:양품 /4:데이터없음
+					self.modbus_device.write_register(address=207, value=idx)
+					
+				elif mode == "ng_continuity":  # 연속 불량 발생
+					self.modbus_device.write_register(address=208, value=idx)
+					
+				elif mode == "state":  # 
+					self.modbus_device.write_register(address=209, value=idx)
+					
+				elif mode == "reconnect":  #
+					self.modbus_device.write_registers(address=203, values=[1,0,0,0,0,0,0,0])
+					
+				else:
+					LM.log_print(f"[PLC] Unknown mode: {mode}")
+						
+			except:
+				LM.log_print(f"[PLC] Signal processing error: {traceback.format_exc()}")
+				self.is_connected = False
+				break
+
+
+# ▶ 작업 클래스
+class HardWork:
+	def __init__(self):
+		# 라인 설정 로드
+		self.inspection_sequence = line_config['sequence_map']
+		self.first_station = line_config['stations']['first']
+		self.second_station = line_config['stations']['second']
+		
+		# 스테이션 초기화
+		self.station1_dict = {}
+		self.station2_dict = {}
+		self.station3_dict = {}
+		self.station4_dict = {}
+
+		try:
+			self.hangul_font = ImageFont.truetype("C:/Windows/Fonts/malgunbd.ttf", 16)
+		except:
+			self.hangul_font = ImageFont.load_default()
+
+	def update_labels(self, client_id, add_labels, remove_labels):
+		"""라벨 업데이트
+		Args:
+			client_id: 클라이언트 ID
+			add_labels: 콤마로 구분된 추가할 라벨 문자열
+			remove_labels: 콤마로 구분된 제거할 라벨 문자열
+		"""
+		try:
+			if add_labels:
+				new_labels = add_labels.split(',')
+				
+				for label in new_labels:
+					if label not in model_info['models'][MB.model_name][client_id]['label_ng_conditions']:  # label_ng_conditions에 기본값으로 추가
+						model_info['models'][MB.model_name][client_id]['label_ng_conditions'][label] = ['미지정', 90, 2, 3]
+			
+			if remove_labels:
+				remove_label_list = remove_labels.split(',')
+				
+				for label in remove_label_list:
+					if label in model_info['models'][MB.model_name][client_id]['critical_ng_list']:  # critical_ng_list에서 제거
+						model_info['models'][MB.model_name][client_id]['critical_ng_list'].remove(label)
+					
+					if label in model_info['models'][MB.model_name][client_id]['label_ng_conditions']:  # label_ng_conditions에서 제거
+						del model_info['models'][MB.model_name][client_id]['label_ng_conditions'][label]
+				
+			MF.save_info_json(model_info)
+			SS.send_json()
+
+			LM.log_print(f"[UPDATE] {client_id} Label Update Complete")
+		except:
+			LM.log_print(f'[UPDATE] {client_id} Label Update Failed: {traceback.format_exc()}')
+
+	def reset_variables(self):
+		"""변수 초기화"""
+		SS.result_dict = create_result_dict(line_config['client_ids'])
+
+	def draw_text_on_image(self, image, text, position='top_left', color=(255, 255, 255), bg_color=(255, 0, 0)):
+		"""이미지에 텍스트를 그리는 함수
+		position: 'top_left' 또는 'top_right'
+		"""
+		# OpenCV 이미지를 PIL 이미지로 변환
+		image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+		pil_image = Image.fromarray(image_rgb)
+		draw = ImageDraw.Draw(pil_image)
+		
+		# 텍스트 크기 및 폰트 메트릭 계산
+		ascent, descent = self.hangul_font.getmetrics()
+		bbox = draw.textbbox((0, 0), text, font=self.hangul_font)
+		text_width = bbox[2] - bbox[0]
+		text_height = bbox[3] - bbox[1]
+		
+		height, width = image.shape[:2]
+		margin = 8  # 경계선과의 간격
+		box_padding = 5  # 텍스트 박스 내부 여백
+		
+		if position == 'top_left':
+			text_x = margin + box_padding
+			text_y = margin + box_padding
+		elif position == 'top_right':
+			text_x = width - text_width - margin - box_padding
+			text_y = margin + box_padding
+		
+		# 배경 박스 그리기
+		box_x1 = text_x - box_padding
+		box_y1 = text_y - box_padding
+		box_x2 = text_x + text_width + box_padding
+		box_y2 = text_y + text_height + box_padding
+		draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=bg_color)
+		
+		# 텍스트 그리기
+		draw.text((text_x, text_y-4), text, fill=color, font=self.hangul_font)
+		
+		# PIL 이미지를 다시 OpenCV 형식으로 변환
+		return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
+	def make_show_image(self, client_id, label, image):
+		"""출력 이미지 만들기"""
+		label = str(label).upper()
+		# 색상 선택
+		if label == 'NONE':
+			color = (255, 255, 255)  # 흰색 (No data)
+		elif 'OK' in label:
+			color = (41, 252, 41)    # 초록색 (OK)
+		else:
+			color = (41, 41, 252)    # 빨간색 (NG)
+
+		try:
+			if label == 'NONE' or 'ERROR' in label:
+				image = np.zeros((290, 391, 3), dtype=np.uint8)
+				font = cv2.FONT_HERSHEY_SIMPLEX
+				
+				# 라벨에 따라 텍스트 결정
+				text = 'Error' if 'ERROR' in label else 'No data'
+					
+				textsize = cv2.getTextSize(text, font, 1, 2)[0]
+				
+				text_x = (image.shape[1] - textsize[0]) // 2
+				text_y = (image.shape[0] + textsize[1]) // 2
+				
+				cv2.putText(image, text, (text_x, text_y), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+			else:
+				image = cv2.resize(image, (391, 290))
+
+			height, width = image.shape[:2]
+			image = cv2.rectangle(image, (0, 0), (width, height), color, 4)
+
+			# GPU 상태가 False인 경우 이미지 우측 상단에 "GPU미사용" 표시
+			if not SS.gpu_avail_dict[client_id]:
+				image = self.draw_text_on_image(image, "GPU 미사용", position='top_right', color=(255, 0, 0), bg_color=(0, 0, 0))
+
+			# 불량 정보를 좌측 상단에 표시
+			if label != 'NONE' and 'OK' not in label and 'ERROR' not in label:
+				# 불량 라벨에서 파트명과 불량명 추출
+				if 'DETECTION' in label:
+					text_to_show = '각인 누락'
+					image = self.draw_text_on_image(image, text_to_show, position='top_left', color=(255, 255, 255), bg_color=(255, 0, 0))
+				else:  # 일반 불량
+					client_data = model_info['models'][MB.model_name][client_id]
+					if 'label_ng_conditions' in client_data and label in client_data['label_ng_conditions']:
+						defect_name = client_data['label_ng_conditions'][label][0]
+					text_to_show = f"{defect_name}"
+					image = self.draw_text_on_image(image, text_to_show, position='top_left', color=(255, 255, 255), bg_color=(255, 0, 0))
+				
+			image = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+			image = Image.fromarray(image)
+			photo_image = ImageTk.PhotoImage(image)
+			return photo_image
+		except:
+			LM.log_print(f"[MAKE] make show image error: {traceback.format_exc()}")
+			image = np.zeros((290, 391, 3), dtype=np.uint8)
+			image = cv2.rectangle(image, (0, 0), (391, 290), color, 4)
+			image = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+			image = Image.fromarray(image)
+			return ImageTk.PhotoImage(image)
+
+	def move_buffer(self):
+		"""버퍼 이동: station1 -> 2 -> 3 -> 4"""
+		# station3 -> station4 이동
+		self.station4_dict.update(self.station3_dict)
+		
+		# station2 -> station3 이동
+		self.station3_dict = self.station2_dict.copy()
+		
+		# station1 -> station2 이동
+		self.station2_dict = self.station1_dict.copy()
+		
+		# 현재 결과 -> station1 이동
+		self.station1_dict = SS.result_dict.copy()
+
+		# 각 스테이션 라벨 출력
+		for name, d in [
+			("station1", self.station1_dict),
+			("station2", self.station2_dict),
+			("station3", self.station3_dict),
+			("station4", self.station4_dict),
+			("result_dict", SS.result_dict),
+		]:
+			labels = {k: v.get('label', None) for k, v in d.items()}
+			print(f"{name} labels: {labels}")
+
+	def analysis_result(self):
+		"""검사 결과 종합"""
+		all_present = all(
+			v["label"] is not None and v["image"] is not None
+			for v in SS.result_dict.values()
+		)
+		print(f"[RESULT] Check analysis conditions: all_present={all_present}, result_request={MB.result_request}")
+		all_present = True  # 테스트용
+		print(f"[RESULT] Check test analysis conditions: all_present={all_present}, result_request={MB.result_request}")  # 테스트용
+		
+		if MB.result_request and all_present:
+			LM.log_print("[RESULT] results summary started!")
+
+			if MB.manual_mode:  # 수동 검사
+				self.display_results_images(SS.result_dict)  # 검사 결과 표시
+
+			else:  # 자동 검사
+				self.move_buffer()  # 버퍼 이동
+
+				for client_id in self.first_station:
+					self.station1_dict[client_id] = SS.result_dict[client_id]
+				
+				for client_id in self.second_station:
+					self.station4_dict[client_id] = SS.result_dict[client_id]
+
+				self._send_result_to_plc(self.station1_dict, self.station4_dict)  # PLC에 검사 결과 전송
+				date_time = self.get_date_time()
+				self.display_results_images(self.station4_dict)  # 검사 결과 표시
+				self._print_results(self.station4_dict)  # 검사 결과 정리 및 출력
+				MF.update_count(self.station4_dict)  # 카운트 업데이트
+				is_critical_ng = self.check_critical_ng(self.station4_dict)  # 중대 불량 여부 확인
+				DB.write_result(MB.model_name, is_critical_ng, date_time, self.station4_dict)  # 검사 결과 DB 저장
+				MF.update_result_log()  # 검사 결과 로그 업데이트
+			
+			MB.result_request = False  # 결과 요청 신호 초기화
+		
+	def _send_result_to_plc(self, station1_dict, station4_dict):
+		"""PLC에 검사 결과 전송"""
+		stations = {
+			'station1': station1_dict,
+			'station4': station4_dict
+		}
+		
+		for station_name, result_dict in stations.items():
+			final_result = 'ok'
+			for client_id, result in result_dict.items():
+				label = str(result['label']).upper()
+
+				# 1. 배출 바이패스 여부 확인
+				bypass_enabled = model_info['models'][MB.model_name][client_id].get('inspection_only', False)
+				if bypass_enabled:
+					continue
+
+				# 2. 중대 불량 여부 확인 
+				critical_ng_list = [ng.upper() for ng in model_info['models'][MB.model_name][client_id]['critical_ng_list']]
+				if label in critical_ng_list:
+					final_result = 'critical'
+					break
+					
+				# 3. 데이터 없음 여부 확인
+				elif label == 'NONE':
+					if final_result == 'ok':
+						final_result = 'none'
+				
+				# 4. 일반 불량 여부 확인
+				elif 'OK' not in label:
+					final_result = 'ng'
+					
+			if final_result == 'critical':  # 중대 불량 
+				value = 1
+			elif final_result == 'ng':  # 일반 불량
+				value = 2
+			elif final_result == 'none':  # 데이터 없음
+				value = 4
+			else:  # 양품
+				value = 3
+			
+			MB.modbus_queue.put({"mode": station_name + '_result', "value": value})
+			LM.log_print(f"[PLC] Send result: {station_name} {value}")
+		
+		MB.modbus_queue.put({"mode": "ready"})
+
+	def get_date_time(self):
+		"""날짜와 시간 반환"""
+		now = datetime.datetime.now()
+		return now.strftime("%Y-%m-%d %H:%M:%S")
+
+	def check_critical_ng(self, result_dict):
+		"""중대 불량 여부 확인"""
+		for client_id, result in result_dict.items():
+			if result['label'] in model_info['models'][MB.model_name][client_id]['critical_ng_list']:
+				return True
+		return False
+
+	def display_results_images(self, result_dict):
+		"""결과 딕셔너리를 화면에 표시하는 공통 함수"""
+		if not MF.ng_log_checking and not MF.ng_statistics_mode:  # 불량 로그 체크 중 or 불량 수량 확인 모드 활성화 중이면 출력 화면 업데이트 X
+			for client_id, result in result_dict.items():
+				label = result.get('label')
+				image = result.get('image')
+				idx = self.inspection_sequence[client_id]
+
+				MF.show_image_list[idx] = self.make_show_image(client_id, label, image)
+				MF.main_canvas.itemconfig(MF.show_place_list[idx], image=MF.show_image_list[idx], state='normal')
+				MF.switch_ok_ng_sign(label, idx)
+
+	def _print_results(self, final_station_dict):
+		"""검사 결과 정리 및 출력"""
+		headers = line_config['client_ids']
+		results = []
+		for client_id in headers:
+			if client_id in final_station_dict:
+				label = final_station_dict[client_id].get('label')
+				results.append(label if label is not None else '-')
+			else:
+				results.append('-')
+
+		print("\nStation 4 Result:")
+		print(tabulate([results], headers=headers, tablefmt='fancy_grid'))
+
+	def check_critical_ng(self, final_station_dict):
+		"""중대 불량 여부 확인"""
+		for client_id, result in final_station_dict.items():
+			if result['label'] in model_info['models'][MB.model_name][client_id]['critical_ng_list']:
+				return True
+			
+	def check_mail_send_time(self):
+		"""메일 전송 시간 확인 (08시 이후, 전날 데이터, 중복 전송 방지)"""
+		while True:
+			now = datetime.datetime.now()
+			report_date = (now - datetime.timedelta(days=1)).date()  # 어제날짜로 항상 기록
+			if now.hour >= 8 and not DB.already_sent_report(report_date):  # 08시 이후, 전날 데이터, 중복 전송 방지
+				excel_path, start_date, end_date = ER.create_excel_report()
+				try:
+					LM.log_print(f"[MAIL] Try to send daily report: {report_date}")
+					send_excel_report_with_context(
+						smtp_host="smtp.gmail.com",
+						smtp_port=465,
+						smtp_user="sslinesinplat@gmail.com",
+						smtp_password="iwppyeqlvjumzaoy",
+						sender="sslinesinplat@gmail.com",
+						recipients=["ooolov1@sinplat.com"],
+						line_name=line_name,
+						line_type=line_type,
+						start_date=start_date,
+						end_date=end_date,
+						excel_path=excel_path
+					)
+					DB.log_mail_send(report_date, 'Y', datetime.datetime.now())
+					LM.log_print(f"[MAIL] Successfully sent daily report: {report_date}")
+				except Exception as e:
+					LM.log_print(f"[MAIL] Failed to send daily report: {e}")
+					DB.log_mail_send(report_date, 'N', datetime.datetime.now())
+			time.sleep(60)  # 1분마다 체크
+
+
+# ▶ 이력 조회 프레임 클래스
 class HistoryFrame(tk.Frame):
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.master = master
-        self.historyBgImage = ImageTk.PhotoImage(file=f"bg/{BgSetup}/history.png")
-        self.NoneDataImage = ImageTk.PhotoImage(file=f"bg/{BgSetup}/NoneData.png")
-        self.historyModelCheck = ['ALL']
-        with open('CheckValue/product_info.json') as json_file:
-            json_data = json.load(json_file)
-        historyModelCheck_append = json_data[LINE][CodeSetup][1]
-        self.historyModelCheck.extend(historyModelCheck_append)
-        print(self.historyModelCheck)
-        # self.historyModelCheck = (
-        #     ["ALL","ST-558522APC","32007XJgH6X","ST-HE417119mH","ST-E336221mH","ST-356217gH","ST-386923","ST-387523gH","ST-417119SH","ST-417319SH",] if CodeSetup == "CONE" else ["ALL","ST-558522ASH","32007XJgH6X","ST-HE417119mH","ST-E336221mH","ST-356217gH","ST-386923","ST-387523gH","ST-417119SH","ST-417319SH"]
-        # )
-        self.histroyResultCheck = ["ALL", "OK", "NG", "NO"]
-        self.historyInputText = [None] * 6
-        self.historyInputData = ["", "", "", "", "", ""]
-        self.historyImageData = [[], [], [], [], [], []]
-        self.historyResultData = [None, None, None, None, None, None]
-        self.history_ok = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.history_ng = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.history_cam = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.indexCount1 = 0
-        self.indexCount2 = 0
-        self.showingIndex = 0
-        self.create_widgets()
-
-    def create_widgets(self):
-        self.grid(row=0, column=0)
-        self.history_canvas = tk.Canvas(self, width=1920, height=1080)
-        self.historyBg = self.history_canvas.create_image(0, 0, image=self.historyBgImage, anchor="nw")
-
-        self.history_cam[0] = self.history_canvas.create_image(36, 548, image="", anchor="nw", state="normal")
-        self.history_cam[1] = self.history_canvas.create_image(36, 131, image="", anchor="nw", state="normal")
-        self.history_cam[2] = self.history_canvas.create_image(484, 131, image="", anchor="nw", state="normal")
-        if CodeSetup == "CONE":
-            self.history_cam[3] = self.history_canvas.create_image(932, 131, image="", anchor="nw", state="normal")
-            self.history_cam[4] = self.history_canvas.create_image(484, 548, image="", anchor="nw", state="normal")
-            self.history_cam[5] = self.history_canvas.create_image(932, 548, image="", anchor="nw", state="normal")
-        else:
-            self.history_cam[3] = self.history_canvas.create_image(484, 548, image="", anchor="nw", state="normal")
-            self.history_cam[4] = self.history_canvas.create_image(932, 548, image="", anchor="nw", state="normal")
-
-        self.history_ok[0] = self.history_canvas.create_image(31, 856, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        self.history_ok[1] = self.history_canvas.create_image(31, 438, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        self.history_ok[2] = self.history_canvas.create_image(479, 438, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.history_ok[3] = self.history_canvas.create_image(927, 438, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-            self.history_ok[4] = self.history_canvas.create_image(479, 856, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-            self.history_ok[5] = self.history_canvas.create_image(927, 856, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-        else:
-            self.history_ok[3] = self.history_canvas.create_image(479, 856, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-            self.history_ok[4] = self.history_canvas.create_image(927, 856, image=main_frame.main_frame_ok, anchor="nw", state="hidden")
-
-        self.history_ng[0] = self.history_canvas.create_image(251, 856, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        self.history_ng[1] = self.history_canvas.create_image(251, 438, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        self.history_ng[2] = self.history_canvas.create_image(699, 438, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        if CodeSetup == "CONE":
-            self.history_ng[3] = self.history_canvas.create_image(1147, 438, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-            self.history_ng[4] = self.history_canvas.create_image(699, 856, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-            self.history_ng[5] = self.history_canvas.create_image(1147, 856, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-        else:
-            self.history_ng[3] = self.history_canvas.create_image(699, 856, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-            self.history_ng[4] = self.history_canvas.create_image(1147, 856, image=main_frame.main_frame_ng, anchor="nw", state="hidden")
-
-        # TEXT
-        self.historyInputText[0] = self.history_canvas.create_text(140, 1008, text="ALL", font=("gothic", 15, "bold"), fill="white", anchor="center")
-        self.historyInputText[1] = self.history_canvas.create_text(416, 1008, text="ALL", font=("gothic", 15, "bold"), fill="white", anchor="center")
-        self.historyInputText[2] = self.history_canvas.create_text(654, 1008, text="None", font=("gothic", 15, "bold"), fill="white", anchor="center")
-        self.historyInputText[3] = self.history_canvas.create_text(894, 1008, text="None", font=("gothic", 15, "bold"), fill="white", anchor="center")
-        self.historyIndexView = self.history_canvas.create_text(1632, 155, text="", font=("gothic", 20, "bold"), fill="white", anchor="center")
-
-        # listbox
-        color = "#%02x%02X%02x" % (19, 47, 60)
-        self.history_log = tk.Listbox(self.history_canvas, fg="white", bg=color, font=("gothic", 12, "bold"))
-        self.history_log.place(x=1392, y=239, width=476, height=699)
-        self.history_scrollbar = tk.Scrollbar(self.history_canvas, bg=color, orient="vertical")
-        self.history_scrollbar.config(command=self.history_log.yview)
-        self.history_scrollbar.place(x=1392 + 436, y=239, width=40, height=699)
-        self.history_log.config(yscrollcommand=self.history_scrollbar.set)
-        self.history_log.bind("<<ListboxSelect>>", self.on_select)
-
-        #model ComboBox
-        self.select_model = ttk.Combobox(self, width = 14, justify = 'center', values= self.historyModelCheck, font= ("gothic", 15, "bold"), state = "readonly")
-        self.select_model.current(0)
-        self.show_select_Model = self.history_canvas.create_window(137, 1013, anchor='center', window=self.select_model, state = 'normal')
-
-        #startTime ComboBox
-        values_time = ['Default', '00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14','15', '16','17', '18', '19', '20', '21', '22', '23', '23']
-        self.select_time_start = ttk.Combobox(self, width = 7, justify = 'center', values= values_time, font= ("gothic", 15, "bold"), state = "readonly")
-        self.select_time_start.current(0)
-        self.show_select_Stime = self.history_canvas.create_window(1115, 1013, anchor='center', window=self.select_time_start, state = 'normal')
-
-        #endTime ComboBox
-        values_time = ['Default', '00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14','15', '16','17', '18', '19', '20', '21', '22', '23', '23']
-        self.select_time_end = ttk.Combobox(self, width = 7, justify = 'center', values= values_time, font= ("gothic", 15, "bold"), state = "readonly")
-        self.select_time_end.current(0)
-        self.show_select_Etime = self.history_canvas.create_window(1269, 1013, anchor='center', window=self.select_time_end, state = 'normal')
-
-        self.history_canvas.bind("<Button-1>", self.history_btn)
-        self.history_canvas.pack()
-
-    def DbRead(self):
-        self.history_log.delete(0, "end")
-
-        # 입력 데이터 확인
-        # if self.historyInputData[0] == "ALL" or self.historyInputData[0] == "":
-        #     self.historyInputData[0] = None
-        if self.historyInputData[1] == "ALL" or self.historyInputData[1] == "":
-            self.historyInputData[1] = None
-        if self.historyInputData[2] == "":
-            self.historyInputData[2] = None
-        if self.historyInputData[3] == "":
-            self.historyInputData[3] = None
-
-        if self.select_model.get() == 'ALL':
-            self.historyInputData[0] = None
-        else:
-            self.historyInputData[0] = self.select_model.get()
-
-        if self.select_time_start.get() == 'Default':
-            self.historyInputData[4] = None
-        else:
-            self.historyInputData[4] = self.select_time_start.get()
-
-        if self.select_time_end.get() == 'Default':
-            self.historyInputData[5] = None
-        else:
-            self.historyInputData[5] = self.select_time_end.get()
-
-        if self.historyInputData[4] != None:
-            if self.historyInputData[2] == None:
-                TodayDate = datetime.datetime.now().strftime("%Y-%m-%d")
-                self.historyInputData[2] = TodayDate
-                self.historyInputData[2] = self.historyInputData[2]+' '+self.historyInputData[4]
-            else:
-                if len(self.historyInputData[2]) > 10:
-                    self.historyInputData[2] = self.historyInputData[2][0:10]
-                self.historyInputData[2] = self.historyInputData[2]+' '+self.historyInputData[4]
-        
-        if self.historyInputData[5] != None:
-            if self.historyInputData[3] == None:
-                TodayDate = datetime.datetime.now().strftime("%Y-%m-%d")
-                self.historyInputData[3] = TodayDate
-                self.historyInputData[3] = self.historyInputData[3]+' '+self.historyInputData[5]
-            else:
-                if len(self.historyInputData[3]) > 10:
-                    self.historyInputData[3] = self.historyInputData[3][0:10]
-                self.historyInputData[3] = self.historyInputData[3]+' '+self.historyInputData[5]
-
-        print(self.historyInputData)
-
-        if self.historyInputData[1] == "OK":
-            self.historyInputData[1] = DTT.OKdata
-        elif self.historyInputData[1] == "NO":
-            self.historyInputData[1] = DTT.NoneData
-
-        if CodeSetup == "CONE":
-            self.dbsqlRow = bearingartDB.readSql_Cone(ModelName=self.historyInputData[0], Result1=self.historyInputData[1], Result2=self.historyInputData[1], Result3=self.historyInputData[1], Result4=self.historyInputData[1], Result5=self.historyInputData[1], Result6=self.historyInputData[1], StartDate=self.historyInputData[2], EndDate=self.historyInputData[3],)  # self.history_canvas.itemconfig(self.productName, text = self.historyInputData[0])
-        else:
-            self.dbsqlRow = bearingartDB.readSql_Cup(ModelName=self.historyInputData[0], Result1=self.historyInputData[1], Result2=self.historyInputData[1], Result3=self.historyInputData[1], Result4=self.historyInputData[1], Result5=self.historyInputData[1], StartDate=self.historyInputData[2], EndDate=self.historyInputData[3],)  # self.history_canvas.itemconfig(self.productName, text = self.historyInputData[0])
-        # print(self.dbsqlRow)
-        # print(self.dbsqlRow[0][2])
-        # print(self.dbsqlRow[0][3])
-        # print(self.dbsqlRow[0][4])
-        # print(self.dbsqlRow[0][5])
-        # print(self.dbsqlRow[0][6])
-        # print(self.dbsqlRow[0][7])
-        print('SQL Low Data Reading Complete')
-        dbUpdateList = [None] * len(self.dbsqlRow)
-        if CodeSetup == "CONE":
-            for i in range(len(self.dbsqlRow)):
-                dbUpdateList[i] = self.dbsqlRow[i][1]
-                try:
-                    if "1" in self.dbsqlRow[i][2][0] or "1" in self.dbsqlRow[i][3][0] or "1" in self.dbsqlRow[i][4][0] or "1" in self.dbsqlRow[i][5][0] or "1" in self.dbsqlRow[i][6][0] or "1" in self.dbsqlRow[i][7][0]:
-                        dbUpdateList[i] += " | NO | "
-                    elif "1" == self.dbsqlRow[i][2][1] or "1" == self.dbsqlRow[i][2][2] or "1" == self.dbsqlRow[i][2][3] or "1" == self.dbsqlRow[i][2][4] or "1" == self.dbsqlRow[i][2][5] or "1" == self.dbsqlRow[i][3][1] or "1" == self.dbsqlRow[i][3][2] or "1" == self.dbsqlRow[i][3][3] or "1" == self.dbsqlRow[i][3][4] or "1" == self.dbsqlRow[i][3][5] or "1" == self.dbsqlRow[i][4][1] or "1" == self.dbsqlRow[i][4][2] or "1" == self.dbsqlRow[i][4][3] or "1" == self.dbsqlRow[i][4][4] or "1" == self.dbsqlRow[i][4][5] or "1" == self.dbsqlRow[i][5][1] or "1" == self.dbsqlRow[i][5][2] or "1" == self.dbsqlRow[i][5][3] or "1" == self.dbsqlRow[i][5][4] or "1" == self.dbsqlRow[i][5][5] or "1" == self.dbsqlRow[i][6][1] or "1" == self.dbsqlRow[i][6][2] or "1" == self.dbsqlRow[i][6][3] or "1" == self.dbsqlRow[i][6][4] or "1" == self.dbsqlRow[i][6][5] or "1" == self.dbsqlRow[i][7][1] or "1" == self.dbsqlRow[i][7][2] or "1" == self.dbsqlRow[i][7][3] or "1" == self.dbsqlRow[i][7][4] or "1" == self.dbsqlRow[i][7][5]:
-                        dbUpdateList[i] += " | FU | "
-                    elif "1" in self.dbsqlRow[i][2] or "1" in self.dbsqlRow[i][3] or "1" in self.dbsqlRow[i][4] or "1" in self.dbsqlRow[i][5] or "1" in self.dbsqlRow[i][6] or "1" in self.dbsqlRow[i][7]:
-                        dbUpdateList[i] += " | NG | "
-                    else:
-                        dbUpdateList[i] += " | OK | "
-                except:
-                    if "1" in self.dbsqlRow[i][2][0] or "1" in self.dbsqlRow[i][3][0] or "1" in self.dbsqlRow[i][4][0] or "1" in self.dbsqlRow[i][5][0] or "1" in self.dbsqlRow[i][6][0] or "1" in self.dbsqlRow[i][7][0]:
-                        dbUpdateList[i] += " | NO | "
-                    elif "1" in self.dbsqlRow[i][2] or "1" in self.dbsqlRow[i][3] or "1" in self.dbsqlRow[i][4] or "1" in self.dbsqlRow[i][5] or "1" in self.dbsqlRow[i][6] or "1" in self.dbsqlRow[i][7]:
-                        dbUpdateList[i] += " | NG | "
-                    else:
-                        dbUpdateList[i] += " | OK | "
-                time = self.dbsqlRow[i][14]
-                time = str(time)
-                dbUpdateList[i] += time + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][8] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][9] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][10] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][11] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][12] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][13] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][2] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][3] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][4] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][5] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][6] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][7]
-        else:
-            for i in range(len(self.dbsqlRow)):
-                dbUpdateList[i] = self.dbsqlRow[i][1]
-                try:
-                    if "1" in self.dbsqlRow[i][2][0] or "1" in self.dbsqlRow[i][3][0] or "1" in self.dbsqlRow[i][4][0] or "1" in self.dbsqlRow[i][5][0] or "1" in self.dbsqlRow[i][6][0]:
-                        dbUpdateList[i] += " | NO | "
-                    elif "1" == self.dbsqlRow[i][2][1] or "1" == self.dbsqlRow[i][2][2] or "1" == self.dbsqlRow[i][2][3] or "1" == self.dbsqlRow[i][2][4] or "1" == self.dbsqlRow[i][2][5] or "1" == self.dbsqlRow[i][3][1] or "1" == self.dbsqlRow[i][3][2] or "1" == self.dbsqlRow[i][3][3] or "1" == self.dbsqlRow[i][3][4] or "1" == self.dbsqlRow[i][3][5] or "1" == self.dbsqlRow[i][4][1] or "1" == self.dbsqlRow[i][4][2] or "1" == self.dbsqlRow[i][4][3] or "1" == self.dbsqlRow[i][4][4] or "1" == self.dbsqlRow[i][4][5] or "1" == self.dbsqlRow[i][5][1] or "1" == self.dbsqlRow[i][5][2] or "1" == self.dbsqlRow[i][5][3] or "1" == self.dbsqlRow[i][5][4] or "1" == self.dbsqlRow[i][5][5] or "1" == self.dbsqlRow[i][6][1] or "1" == self.dbsqlRow[i][6][2] or "1" == self.dbsqlRow[i][6][3] or "1" == self.dbsqlRow[i][6][4] or "1" == self.dbsqlRow[i][6][5]:
-                        dbUpdateList[i] += " | FU | "
-                    elif "1" in self.dbsqlRow[i][2] or "1" in self.dbsqlRow[i][3] or "1" in self.dbsqlRow[i][4] or "1" in self.dbsqlRow[i][5] or "1" in self.dbsqlRow[i][6]:
-                        dbUpdateList[i] += " | NG | "
-                    else:
-                        dbUpdateList[i] += " | OK | "
-                except:
-                    if "1" in self.dbsqlRow[i][2][0] or "1" in self.dbsqlRow[i][3][0] or "1" in self.dbsqlRow[i][4][0] or "1" in self.dbsqlRow[i][5][0] or "1" in self.dbsqlRow[i][6][0]:
-                        dbUpdateList[i] += " | NO | "
-                    elif "1" in self.dbsqlRow[i][2] or "1" in self.dbsqlRow[i][3] or "1" in self.dbsqlRow[i][4] or "1" in self.dbsqlRow[i][5] or "1" in self.dbsqlRow[i][6]:
-                        dbUpdateList[i] += " | NG | "
-                    else:
-                        dbUpdateList[i] += " | OK | "
-                time = self.dbsqlRow[i][12]
-                time = str(time)
-                dbUpdateList[i] += time + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][7] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][8] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][9] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][10] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][11] + " | "
-                # dbUpdateList[i] += self.dbsqlRow[i][13] + ' | '
-                dbUpdateList[i] += self.dbsqlRow[i][2] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][3] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][4] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][5] + " | "
-                dbUpdateList[i] += self.dbsqlRow[i][6]  # + ' | '
-                # dbUpdateList[i] += self.dbsqlRow[i][7]
-        print('SQL Low Data Trim Complete')
-        dbUpdateList.reverse()
-        print('SQL Low Trim Data Reverse Complete')
-
-        for i in range(len(self.dbsqlRow)):
-            self.history_log.insert(0, f'{i+1}. '+dbUpdateList[i])
-
-        print('SQL Low Trim Reverse Data List Input Complete')
-
-        x = 0
-        for i in reversed(range(len(dbUpdateList))):
-            try:
-                # print(i)
-                if "NG" in dbUpdateList[i]:
-                    self.history_log.itemconfig(x, bg="red")
-                elif "NO" in dbUpdateList[i]:
-                    self.history_log.itemconfig(x, bg="black")
-                elif "FU" in dbUpdateList[i]:
-                    self.history_log.itemconfig(x, bg="magenta")
-                else:
-                    self.history_log.itemconfig(x, bg="green")
-                x += 1
-            except:
-                x += 1
-
-        print('SQL Low Trim Reverse Data List Color Setup Complete')
-
-        return
-
-        # self.badCheckList = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        # for i in range(len(self.dbsqlRow)):
-        #     for x in range(5 if CodeSetup == 'CUP' else 6):
-        #         # print(self.dbsqlRow[i][x + 2])
-        #         for z in range(14):
-        #             try:
-        #                 if self.dbsqlRow[i][x + 2][z] == "1":
-        #                     self.badCheckList[z] += 1
-        #             except:
-        #                 print("except break")
-        #                 break
-
-        # print('SQL Low Trim Data BadProduct Check')
-
-        # for i in range(14):
-        #     try:
-        #         print(f"{DTT.badType[i]} : {self.badCheckList[i]}개 불량확인")
-        #     except:
-        #         print(f"DUMMY : {self.badCheckList[i]}개 불량확인")
-
-    def on_select(self, event):
-        w = event.widget
-        idx = int(w.curselection()[0])
-        value = w.get(idx)
-
-        indexlist = value.split(" | ")
-        print(indexlist, len(indexlist))
-        self.historyImageData = [[], [], [], [], [], []]
-        self.showingIndex = 0
-        self.selectProduct = indexlist[0]
-        self.history_canvas.itemconfig(self.historyIndexView, text=f"{indexlist[0]} - {self.showingIndex}")
-        """
-        0 : 기종
-        1 : 결과
-        2 : 시간
-        3 ~ 8 : 파일 경로
-        9 ~ 14 : 개별 결과
-        """
-        for i in range(3, 9 if CodeSetup == "CONE" else 8):
-            pathlist = []
-            pathlist = indexlist[i].split("||")
-            for x in range(len(pathlist)):
-                try:
-                    image = ImageTk.PhotoImage(file=pathlist[x])
-                except:
-                    print(traceback.format_exc())
-                    image = ImageTk.PhotoImage(file=f"bg/{BgSetup}/OKDATA.png")
-                self.historyImageData[i - 3].append(image)
-            self.history_canvas.itemconfig(self.history_cam[i - 3], image=self.historyImageData[i - 3][0])
-
-        for i in range(9 if CodeSetup == "CONE" else 8, 15 if CodeSetup == "CONE" else 13):
-            if '1' not in indexlist[i]:
-                self.history_canvas.itemconfig(self.history_ok[i - 9 if CodeSetup == "CONE" else i - 8], state="normal")
-                self.history_canvas.itemconfig(self.history_ng[i - 9 if CodeSetup == "CONE" else i - 8], state="hidden")
-                self.historyResultData[i - 9] = True
-            elif indexlist[i][0] == '1':#DTT.NoneData or indexlist[i] == "100000000000" or indexlist[i] == "10000000":
-                self.history_canvas.itemconfig(self.history_ok[i - 9 if CodeSetup == "CONE" else i - 8], state="hidden")
-                self.history_canvas.itemconfig(self.history_ng[i - 9 if CodeSetup == "CONE" else i - 8], state="hidden")
-                self.historyResultData[i - 9] = None
-            else:
-                self.history_canvas.itemconfig(self.history_ok[i - 9 if CodeSetup == "CONE" else i - 8], state="hidden")
-                self.history_canvas.itemconfig(self.history_ng[i - 9 if CodeSetup == "CONE" else i - 8], state="normal")
-                self.historyResultData[i - 9] = False
-
-    def show_calendar(self, inputdata):
-
-        def print_sel_start():
-            split_text = cal.selection_get()
-            test = split_text.strftime("%Y-%m-%d")
-            # test = test.split(',')
-            self.year = test[0]
-            self.month = test[1]
-            self.day = test[2]
-            # input_date = self.year + "년 " + self.month + "월 " + self.day + "일"
-            self.history_canvas.itemconfig(self.historyInputText[2], text=test)
-            self.historyInputData[2] = test
-            top.destroy()
-
-        def print_sel_end():
-            split_text = cal.selection_get()
-            test = split_text.strftime("%Y-%m-%d")
-            # test = test.split(',')
-            self.year = test[0]
-            self.month = test[1]
-            self.day = test[2]
-            # input_date = self.year + "년 " + self.month + "월 " + self.day + "일"
-            self.history_canvas.itemconfig(self.historyInputText[3], text=test)
-            self.historyInputData[3] = test
-            top.destroy()
-
-        top = tk.Toplevel(root)
-
-        now = datetime.datetime.now()
-
-        years = now.year
-        months = now.month
-        days = now.day
-
-        cal = Calendar(top, font="Arial 14", selectmode="day", cursor="hand1", year=years, month=months, day=days,)
-        cal.pack(fill="both", expand=True)
-        if inputdata == "start":
-            tk.Button(top, text="Select", command=print_sel_start).pack()
-        elif inputdata == "end":
-            tk.Button(top, text="Select", command=print_sel_end).pack()
-
-    def history_btn(self, event):
-        x = event.x
-        y = event.y
-
-        print(x, y)
-
-        if 31 < x < 278 and 23 < y < 94:
-            print('생산 수량 확인 인터페이스 활성화')
-            history_produce_frame.tkraise()
-
-        if 1374 < x < 1460 and 125 < y < 187:
-            print("left index move")
-            self.showingIndex -= 1
-            if self.showingIndex == -1:
-                self.showingIndex = 0
-            self.history_canvas.itemconfig(self.historyIndexView, text=f"{self.selectProduct} - {self.showingIndex}")
-            for i in range(6 if CodeSetup == "CONE" else 5):
-                try:
-                    self.history_canvas.itemconfig(self.history_cam[i], image=self.historyImageData[i][self.showingIndex])
-                    if self.historyResultData[i] == True:
-                        self.history_canvas.itemconfig(self.history_ok[i], state="normal")
-                        self.history_canvas.itemconfig(self.history_ng[i], state="hidden")
-                    elif self.historyResultData[i] == None:
-                        self.history_canvas.itemconfig(self.history_ok[i], state="hidden")
-                        self.history_canvas.itemconfig(self.history_ng[i], state="hidden")
-                    else:
-                        self.history_canvas.itemconfig(self.history_ok[i], state="hidden")
-                        self.history_canvas.itemconfig(self.history_ng[i], state="normal")
-                except:
-                    self.history_canvas.itemconfig(self.history_cam[i], image=self.NoneDataImage)
-                    self.history_canvas.itemconfig(self.history_ok[i], state="hidden")
-                    self.history_canvas.itemconfig(self.history_ng[i], state="hidden")
-
-        if 1795 < x < 1877 and 125 < y < 187:
-            print("right index move")
-            self.showingIndex += 1
-            if self.showingIndex == 10:
-                self.showingIndex = 9
-            self.history_canvas.itemconfig(self.historyIndexView, text=f"{self.selectProduct} - {self.showingIndex}")
-            for i in range(6 if CodeSetup == "CONE" else 5):
-                try:
-                    self.history_canvas.itemconfig(self.history_cam[i], image=self.historyImageData[i][self.showingIndex])
-                    if self.historyResultData[i] == True:
-                        self.history_canvas.itemconfig(self.history_ok[i], state="normal")
-                        self.history_canvas.itemconfig(self.history_ng[i], state="hidden")
-                    elif self.historyResultData[i] == None:
-                        self.history_canvas.itemconfig(self.history_ok[i], state="hidden")
-                        self.history_canvas.itemconfig(self.history_ng[i], state="hidden")
-                    else:
-                        self.history_canvas.itemconfig(self.history_ok[i], state="hidden")
-                        self.history_canvas.itemconfig(self.history_ng[i], state="normal")
-                except:
-                    self.history_canvas.itemconfig(self.history_cam[i], image=self.NoneDataImage)
-                    self.history_canvas.itemconfig(self.history_ok[i], state="hidden")
-                    self.history_canvas.itemconfig(self.history_ng[i], state="hidden")
-
-        if 1630 < x < 1882 and 971 < y < 1043:
-            print("BACK")
-            main_frame.tkraise()
-
-        if 1376 < x < 1625 and 970 < y < 1044:
-            print("SEARCH")
-            # self.DbRead()
-            threading.Thread(target=self.DbRead, daemon=True).start()
-
-        # if 274 < x < 338 and 970 < y < 1040:
-        #     self.indexCount1 += 1
-        #     index = self.indexCount1 % len(self.historyModelCheck)
-        #     self.history_canvas.itemconfig(self.historyInputText[0], text=self.historyModelCheck[index])
-        #     self.historyInputData[0] = self.historyModelCheck[index]
-        #     print("OPTION1")
-
-        if 497 < x < 571 and 970 < y < 1040:
-            self.indexCount2 += 1
-            index = self.indexCount2 % 4
-            self.history_canvas.itemconfig(self.historyInputText[1], text=self.histroyResultCheck[index])
-            self.historyInputData[1] = self.histroyResultCheck[index]
-            print(self.historyInputData)
-            print("OPTION2")
-
-        if 737 < x < 812 and 970 < y < 1040:
-            self.show_calendar("start")
-            print("OPTION3")
-
-        if 973 < x < 1048 and 970 < y < 1040:
-            self.show_calendar("end")
-            print("OPTION4")
-
-class historyProduceFrame(tk.Frame):
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.master = master
-        self.history_produce_img = ImageTk.PhotoImage(file=f"bg/{BgSetup}/history_produce.png")
-
-        # get product
-        with open('CheckValue/product_info.json') as json_file:
-            json_data = json.load(json_file)
-        self.ProductName = json_data[LINE][CodeSetup][1]
-        self.ProductName.append('ALL')
-        self.ProductNameCount = -1
-        self.ButtonCount = len(self.ProductName)
-
-        self.SearchValue = ['ALL', 'None', 'None', 0, 23]
-        self.SearchValueViewText = [None, None, None, None, None]
-
-        self.SearchViewText = [None, None, None, None, None]
-
-        self.master.attributes("-fullscreen", True)
-        self.master.bind("<F11>", lambda event: self.master.attributes("-fullscreen", not self.master.attributes("-fullscreen")))
-        self.master.bind("<Escape>", lambda event: self.master.attributes("-fullscreen", False))
-        self.create_widgets()
-
-    def create_widgets(self):
-        self.grid(row=0, column=0)
-        self.history_produce_canvas = tk.Canvas(self, width=1920, height=1080)
-        self.hisotry_produce_BG = self.history_produce_canvas.create_image(0, 0, image=self.history_produce_img, anchor="nw")
-        self.SearchViewText[0] = self.history_produce_canvas.create_text(440, 247, text="None Search Data", font=("gothic", 25, "bold"), fill="white", anchor="center")
-        self.SearchViewText[1] = self.history_produce_canvas.create_text(440, 390, text="None Search Data", font=("gothic", 25, "bold"), fill="white", anchor="center")
-        self.SearchViewText[2] = self.history_produce_canvas.create_text(440, 534, text="None Search Data", font=("gothic", 25, "bold"), fill="white", anchor="center")
-        self.SearchViewText[3] = self.history_produce_canvas.create_text(440, 676, text="None Search Data", font=("gothic", 25, "bold"), fill="white", anchor="center")
-        self.SearchViewText[4] = self.history_produce_canvas.create_text(440, 819, text="None Search Data", font=("gothic", 25, "bold"), fill="white", anchor="center")
-        self.SearchValueViewText[0] = self.history_produce_canvas.create_text(170, 1000, text=self.SearchValue[0], font=("gothic", 20, "bold"), fill="white", anchor="center")
-        self.SearchValueViewText[1] = self.history_produce_canvas.create_text(465, 1000, text=self.SearchValue[1], font=("gothic", 20, "bold"), fill="white", anchor="center")
-        self.SearchValueViewText[2] = self.history_produce_canvas.create_text(722, 1000, text=self.SearchValue[2], font=("gothic", 20, "bold"), fill="white", anchor="center")
-        self.SearchValueViewText[3] = self.history_produce_canvas.create_text(1057, 1000, text=self.SearchValue[3], font=("gothic", 25, "bold"), fill="white", anchor="center")
-        self.SearchValueViewText[4] = self.history_produce_canvas.create_text(1417, 1000, text=self.SearchValue[4], font=("gothic", 25, "bold"), fill="white", anchor="center")
-
-        # listbox
-        color = "#%02x%02X%02x" % (19, 47, 60)
-        self.history_produce_log = tk.Listbox(self.history_produce_canvas, fg="white", bg=color, font=("gothic", 15, "bold"))
-        self.history_produce_log.place(x=701, y=202, width=1139, height=669)
-        self.history_produce_scrollbar = tk.Scrollbar(self.history_produce_canvas, bg=color, orient="vertical")
-        self.history_produce_scrollbar.config(command=self.history_produce_log.yview)
-        self.history_produce_scrollbar.place(x=701+1139, y=202, width=20, height=669)
-        self.history_produce_log.config(yscrollcommand=self.history_produce_scrollbar.set)
-        self.history_produce_log.bind("<<ListboxSelect>>", self.on_select)
-
-        self.history_produce_canvas.bind("<Button-1>", self.history_produce_btn)
-        self.history_produce_canvas.pack()
-
-    def history_produce_btn(self, event):
-        x = event.x
-        y = event.y
-
-        print(x,y)
-
-        if 294 < x < 355 and 969 < y < 1032:
-            #형번 선택 버튼 클릭
-            print('형번 선택')
-            self.ProductNameCount += 1
-            indexSetup = self.ProductNameCount%self.ButtonCount
-            print(self.ProductNameCount , self.ButtonCount, indexSetup)
-            self.history_produce_canvas.itemconfig(self.SearchValueViewText[0], text = self.ProductName[indexSetup])
-            self.SearchValue[0] = self.ProductName[indexSetup]
-
-            print(self.SearchValue)
-
-        if 552 < x < 609 and 969 < y < 1032:
-            #검색 시작 날짜 버튼 클릭
-            print('검색 시작 날짜')
-            self.show_calendar('start')
-
-        if 812 < x < 873 and 969 < y < 1032:
-            #검색 끝 날짜 버튼 클릭
-            print('검색 끝 날짜')
-            self.show_calendar('end')
-
-        if 891 < x < 966 and 966 < y < 1039:
-            #검색 시작 시간 감소 버튼 클릭
-            print('검색 시작 시간 down')
-            if self.SearchValue[3]-1 < 0:
-                messagebox.showerror("에러발생", "검색 시작 시간은 음수가 될 수 없습니다.")
-            else:
-                self.SearchValue[3] -= 1
-                self.history_produce_canvas.itemconfig(self.SearchValueViewText[3], text = self.SearchValue[3])
-        
-        if 1149 < x < 1216 and 966 < y < 1039:
-            #검색 시작 시간 증가 버튼 클릭
-            print('검색 시작 시간 up')
-            if self.SearchValue[3]+1 >= self.SearchValue[4]:
-                messagebox.showerror("에러발생", "검색 시작 시간은 검색 끝 시간보다 같거나 높아질 수 없습니다.")
-            else:
-                self.SearchValue[3] += 1
-                self.history_produce_canvas.itemconfig(self.SearchValueViewText[3], text = self.SearchValue[3])
-
-        if 1252 < x < 1326 and 966 < y < 1039:
-            #검색 끝 시간 감소 버튼 클릭
-            print('검색 끝 시간 down')
-            if self.SearchValue[4]-1 <= self.SearchValue[3]:
-                messagebox.showerror("에러발생", "검색 끝 시간은 검색 시작 시간보다 적어질 수 없습니다.")
-            else:
-                self.SearchValue[4] -= 1
-                self.history_produce_canvas.itemconfig(self.SearchValueViewText[4], text = self.SearchValue[4])
-
-        if 1509 < x < 1581 and 966 < y < 1039:
-            #검색 끝 시간 증가 버튼 클릭
-            print('검색 끝 시간 up')
-            if self.SearchValue[4]+1 > 23:
-                messagebox.showerror("에러발생", "검색 끝 시간은 23보다 클 수 없습니다.")
-            else:
-                self.SearchValue[4] += 1
-                self.history_produce_canvas.itemconfig(self.SearchValueViewText[4], text = self.SearchValue[4])
-
-        if 1615 < x < 1864 and 931 < y < 1030:
-            #검색 버튼 클릭
-            print('검색 버튼 클릭')
-            #버튼 출력 변수 선언
-            TotalSearchValue = ['', 0, 0, 0, 0]
-            TotalSearchValue[0] = self.SearchValue[0]
-
-            #함수 진행
-            self.history_produce_log.delete(0, "end")
-            startDateStr = None
-            endDateStr = None
-            if self.SearchValue[0] == 'ALL':
-                self.SearchValue[0] = None
-            if self.SearchValue[1] == 'None':
-                self.SearchValue[1] = None
-            if self.SearchValue[2] == 'None':
-                self.SearchValue[2] = None
-
-            if self.SearchValue[1] != None:
-                startDateStr = f'{self.SearchValue[1]} {self.SearchValue[3]}:00:00'
-            if self.SearchValue[2] != None:
-                endDateStr = f'{self.SearchValue[2]} {self.SearchValue[4]}:00:00'
-
-            returnLow = bearingartDB.readSql_View(self.SearchValue[0], startDateStr, endDateStr)
-
-            listboxUpdateText = [None] * len(returnLow)
-            for i, value in enumerate(returnLow):
-                listboxUpdateText[i] = value[1].ljust(20, ' ')                                 #model name
-                listboxUpdateText[i] += f'|    {str(value[2]).rjust(4," ")}     |'             #total
-                listboxUpdateText[i] += f'    {str(value[3]).rjust(4," ")}     |'              #ok
-                listboxUpdateText[i] += f'    {str(value[4]).rjust(4," ")}     |'              #normalng
-                listboxUpdateText[i] += f'    {str(value[5]).rjust(4," ")}     |'              #criticalng
-                listboxUpdateText[i] += f'    {value[7]}'                                      #date
-
-                TotalSearchValue[1] += value[2]
-                TotalSearchValue[2] += value[3]
-                TotalSearchValue[3] += value[4]
-                TotalSearchValue[4] += value[5]
-
-            for i in range(len(listboxUpdateText)):
-                self.history_produce_log.insert(0, f'{i+1}  \t'+listboxUpdateText[i])
-
-            self.history_produce_log.insert(0, f'―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――')
-            self.history_produce_log.insert(0, f'      모델명               전체 수량      양품 수량   일반 불량 수량 중대 불량 수량      생산 시간대')
-
-            for i in range(5):
-                self.history_produce_canvas.itemconfig(self.SearchViewText[i], text = TotalSearchValue[i])
-
-
-        if 30 < x < 278 and 23 < y < 96:
-            #제품 검색 화면으로 이동
-            print('제품 검색 화면 전환')
-            history_frame.tkraise()
-
-    def on_select(self, event):
-        w = event.widget
-        idx = int(w.curselection()[0])
-        value = w.get(idx)
-
-        print(idx, value)
-
-    def show_calendar(self, inputdata):
-        from tkcalendar import Calendar
-
-        def print_sel_start():
-            split_text = cal.selection_get()
-            test = split_text.strftime("%Y-%m-%d")
-            # test = test.split(',')
-            self.year = test[0]
-            self.month = test[1]
-            self.day = test[2]
-            # input_date = self.year + "년 " + self.month + "월 " + self.day + "일"
-            self.history_produce_canvas.itemconfig(self.SearchValueViewText[1], text=test)
-            self.SearchValue[1] = test
-            top.destroy()
-
-        def print_sel_end():
-            split_text = cal.selection_get()
-            test = split_text.strftime("%Y-%m-%d")
-            # test = test.split(',')
-            self.year = test[0]
-            self.month = test[1]
-            self.day = test[2]
-            # input_date = self.year + "년 " + self.month + "월 " + self.day + "일"
-            self.history_produce_canvas.itemconfig(self.SearchValueViewText[2], text=test)
-            self.SearchValue[2] = test
-            top.destroy()
-
-        top = tk.Toplevel(root)
-
-        now = datetime.datetime.now()
-
-        years = now.year
-        months = now.month
-        days = now.day
-
-        cal = Calendar(top, font="Arial 14", selectmode="day", cursor="hand1", year=years, month=months, day=days,)
-        cal.pack(fill="both", expand=True)
-        if inputdata == "start":
-            tk.Button(top, text="Select", command=print_sel_start).pack()
-        elif inputdata == "end":
-            tk.Button(top, text="Select", command=print_sel_end).pack()
-
-class AdminManagementFrame(tk.Frame):
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.master = master
-        self.ManagementBgImage = ImageTk.PhotoImage(file=f"bg/{BgSetup}/management.png")
-        self.ManagementChoiceBgImage = ImageTk.PhotoImage(file=f"bg/{BgSetup}/management_choice.png")
-        self.ManagementLoadingImage = ImageTk.PhotoImage(file=f"bg/{BgSetup}/imageLoading.png")
-
-        # 배출 바이패스 버튼
-        self.bypassbtn_off = ImageTk.PhotoImage(file=f"bg/{BgSetup}/bypass_off.png")
-        self.bypassbtn_on = ImageTk.PhotoImage(file=f"bg/{BgSetup}/bypass_on.png")
-        self.bypass_config = configparser.ConfigParser()
-        self.bypassINI = 'CountSave/State.INI'
-
-        self.ManagementBtnText = [[[None,None],[None,None],[None,None]],[[None,None],[None,None],[None,None]],[[None,None],[None,None],[None,None]],[[None,None],[None,None],[None,None]]]
-        self.ManagementBtnImg = [[[None,None],[None,None],[None,None]],[[None,None],[None,None],[None,None]],[[None,None],[None,None],[None,None]],[[None,None],[None,None],[None,None]]]
-        self.ManagementTrigger = ['CAPORI','CAPBAD','CAPINS','BYPASS']
-        self.state = [False, False, False]
-        # loading gif moduls
-        self.loadingFrame = []
-        im = Image.open(f"bg/{BgSetup}/loading_main.gif")
-        index = 0
-        for frame in ImageSequence.Iterator(im):
-            # np_frame = np.asarray(frame)
-            frame = frame.convert('RGBA')
-            frame = frame.resize((150, 150), Image.ANTIALIAS)
-            frame_tk = ImageTk.PhotoImage(frame)
-            
-            self.loadingFrame.append(frame_tk)
-            index += 1
-        self.loadingProcessTrigger = None
-        
-        self.ManagementBtn_WH = [95,48]
-        if CodeSetup == 'CONE':
-            self.BtnTextLabel = [[['111','112'],['113','114'],['115','116']],[['111','112'],['113','114'],['115','116']],[['111','112'],['113','114'],['115','116']],[['111','112'],['113','114'],['115','116']]]
-            self.ManagementBtnIndex = [[[69,155,'111'],[199,155,'112'],[69,221,'113'],[199,221,'114'],[69,287,'115'],[199,287,'116']],
-                                    [[405,155,'111'],[535,155,'112'],[405,221,'113'],[535,221,'114'],[405,287,'115'],[535,287,'116']],
-                                    [[69,440,'111'],[199,440,'112'],[69,506,'113'],[199,506,'114'],[69,572,'115'],[199,572,'116']],
-                                    [[405,440,'111'],[535,440,'112'],[405,506,'113'],[535,506,'114'],[405,572,'115'],[535,572,'116']]]
-            self.BtnState = [[[False,'111'],[False,'112'],[False,'113'],[False,'114'],[False,'115'],[False,'116']],
-                            [[False,'111'],[False,'112'],[False,'113'],[False,'114'],[False,'115'],[False,'116']],
-                            [[False,'111'],[False,'112'],[False,'113'],[False,'114'],[False,'115'],[False,'116']],
-                            [[False,'111'],[False,'112'],[False,'113'],[False,'114'],[False,'115'],[False,'116']]]
-        else:
-            self.BtnTextLabel = [[['101','102'],['103','104'],['105',None]],[['101','102'],['103','104'],['105',None]],[['101','102'],['103','104'],['105',None]],[['101','102'],['103','104'],['105',None]]]
-            self.ManagementBtnIndex = [[[69,155,'101'],[199,155,'102'],[69,221,'103'],[199,221,'104'],[69,287,'105']],
-                                    [[405,155,'101'],[535,155,'102'],[405,221,'103'],[535,221,'104'],[405,287,'105']],
-                                    [[69,440,'101'],[199,440,'102'],[69,506,'103'],[199,506,'104'],[69,572,'105']],
-                                    [[405,440,'101'],[535,440,'102'],[405,506,'103'],[535,506,'104'],[405,572,'105']]]
-            self.BtnState = [[[False,'101'],[False,'102'],[False,'103'],[False,'104'],[False,'105']],
-                            [[False,'101'],[False,'102'],[False,'103'],[False,'104'],[False,'105']],
-                            [[False,'101'],[False,'102'],[False,'103'],[False,'104'],[False,'105']],
-                            [[False,'101'],[False,'102'],[False,'103'],[False,'104'],[False,'105']]]
-
-        self.create_widgets()
-    
-    def create_widgets(self):
-        self.grid(row=0, column=0)
-        self.management_canvas = tk.Canvas(self, width=700, height=800)
-        self.managementBg = self.management_canvas.create_image(0, 0, image=self.ManagementBgImage, anchor="nw")
-        for i in range(len(self.ManagementBtnText[0])):
-            for x in range(len(self.ManagementBtnText[0][i])):
-                try:
-                    self.ManagementBtnImg[0][i][x] = self.management_canvas.create_image(self.ManagementBtnIndex[0][(i*2)+x][0],self.ManagementBtnIndex[0][(i*2)+x][1], image = self.ManagementChoiceBgImage, state = 'hidden', anchor = 'nw')
-                except:
-                    pass
-                self.ManagementBtnText[0][i][x] = self.management_canvas.create_text(117+(130*x), 179+(66*i), text=self.BtnTextLabel[0][i][x], font=("gothic", 15, "bold"), fill="white", anchor="center")
-
-        for i in range(len(self.ManagementBtnText[1])):
-            for x in range(len(self.ManagementBtnText[1][i])):
-                try:
-                    self.ManagementBtnImg[1][i][x] = self.management_canvas.create_image(self.ManagementBtnIndex[1][(i*2)+x][0],self.ManagementBtnIndex[1][(i*2)+x][1], image = self.ManagementChoiceBgImage, state = 'hidden', anchor = 'nw')
-                except:
-                    pass
-                self.ManagementBtnText[1][i][x] = self.management_canvas.create_text(452+(130*x), 179+(66*i), text=self.BtnTextLabel[1][i][x], font=("gothic", 15, "bold"), fill="white", anchor="center")
-
-        for i in range(len(self.ManagementBtnText[2])):
-            for x in range(len(self.ManagementBtnText[2][i])):
-                try:
-                    self.ManagementBtnImg[2][i][x] = self.management_canvas.create_image(self.ManagementBtnIndex[2][(i*2)+x][0],self.ManagementBtnIndex[2][(i*2)+x][1], image = self.ManagementChoiceBgImage, state = 'hidden', anchor = 'nw')
-                except:
-                    pass
-                self.ManagementBtnText[2][i][x] = self.management_canvas.create_text(117+(130*x), 464+(66*i), text=self.BtnTextLabel[2][i][x], font=("gothic", 15, "bold"), fill="white", anchor="center")
-
-        for i in range(len(self.ManagementBtnText[3])):
-            for x in range(len(self.ManagementBtnText[3][i])):
-                try:
-                    self.ManagementBtnImg[3][i][x] = self.management_canvas.create_image(self.ManagementBtnIndex[3][(i*2)+x][0],self.ManagementBtnIndex[3][(i*2)+x][1], image = self.ManagementChoiceBgImage, state = 'hidden', anchor = 'nw')
-                except:
-                    pass
-                self.ManagementBtnText[3][i][x] = self.management_canvas.create_text(452+(130*x), 464+(66*i), text=self.BtnTextLabel[3][i][x], font=("gothic", 15, "bold"), fill="white", anchor="center")
-
-        # 배출 바이패스 정보 가져오기
-        self.bypass_state_config = configparser.ConfigParser()
-        self.initbypassINI = 'CountSave/State.INI'
-
-        self.bypass_state_config.read('CountSave/State.INI', encoding='euc-kr')
-        self.bypass_state = self.bypass_state_config['BYPASS']['bypass']
-        print(f'▶ 현재 바이패스 상태 : {self.bypass_state}')
-
-        if self.bypass_state == 'on' :
-            main_frame.bypass_mode = True
-            self.pass_mode = self.management_canvas.create_image(483, 32, image=self.bypassbtn_on, anchor="nw")
-        elif self.bypass_state == 'off' :
-            main_frame.bypass_mode = False
-            self.pass_mode = self.management_canvas.create_image(483, 32, image=self.bypassbtn_off, anchor="nw")
-
-        self.imageLoading = self.management_canvas.create_image(350,400, image = self.ManagementLoadingImage, anchor = 'center', state = 'hidden')
-        self.loadingGifImage = self.management_canvas.create_image(350,500, image = '', anchor = 'center', state = 'hidden')
-        self.management_canvas.bind("<Button-1>", self.management_btn)
-        self.management_canvas.pack()
-
-    def make_safe_dir(self, dir):
-        if not os.path.exists(dir):
-            os.makedirs(dir)
-
-    def git_clone(self, git_url):
-        target_dir = os.getcwd()  # 현재 경로
-        self.make_safe_dir(target_dir)
-        git.Git(target_dir).clone(git_url) # 저장될 공간
-
-    def state_set(self, state):
-        self.state_config = configparser.ConfigParser()
-        self.stateINI = 'CountSave/State.INI'
-
-        if os.path.isfile(self.stateINI) == False: 
-            self.state_config['STATE'] = 0
-                
-            # INI 파일 생성 
-            with open(self.stateINI, 'w') as f:
-                self.state_config.write(f)
-
-        self.state_config.read('CountSave/State.INI', encoding='euc-kr')
-
-        self.state_config.set('STATE', 'index', state)
-
-        with open(self.stateINI, 'w') as f:
-            self.state_config.write(f)
-
-    def management_btn(self, event):
-        global ConnectClientCheck
-        x = event.x
-        y = event.y
-
-        print(x, y)
-        for j in range(4):
-            for i in range(len(self.ManagementBtnIndex[j])):
-                if self.ManagementBtnIndex[j][i][0] < x < self.ManagementBtnIndex[j][i][0]+self.ManagementBtn_WH[0] and self.ManagementBtnIndex[j][i][1] < y < self.ManagementBtnIndex[j][i][1]+self.ManagementBtn_WH[1]:
-                    # print(self.ManagementBtnIndex[j][i][2])
-                    # print(j, i)
-                    if j == 3:
-                        if STH.ManualMode == True:
-                            result = messagebox.askyesno("최종 확인", "해당 PC를 바이패스 시키겠습니까?\n바이패스시 PC가 종료됩니다.")
-                            if result == True:
-                                if self.BtnState[j][i][0] == True:
-                                    messagebox.showinfo("설정 완료","바이패스가 해제됩니다.\n시스템을 재가동 해주세요.")
-                                else:
-                                    messagebox.showinfo("설정 완료","바이패스가 설정됩니다.\n해당 PC가 종료됩니다.")
-                            else:
-                                main_frame.update_signal(f'Not ManualMode / Change to ManualMode Please')
-                                return
-                        else:
-                            main_frame.update_signal(f'Not ManualMode / Change to ManualMode Please')
-                            return
-                        
-                    self.BtnState[j][i][0] = not self.BtnState[j][i][0]
-                    self.management_canvas.itemconfig(self.ManagementBtnImg[j][int(i/2)][int(i%2)], state = 'normal' if self.BtnState[j][i][0] else 'hidden')
-                    sendMsg = f'{self.ManagementTrigger[j]}ON{self.BtnState[j][i][1]}' if self.BtnState[j][i][0] else f'{self.ManagementTrigger[j]}OFF{self.BtnState[j][i][1]}'
-                    if 'CAPORI' in sendMsg:
-                        if 'ON' in sendMsg:
-                            main_frame.update_signal(f'Origin Image Capture On - {self.BtnState[j][i][1]}')
-                        else:
-                            main_frame.update_signal(f'Origin Image Capture Off - {self.BtnState[j][i][1]}')
-                    elif 'CAPBAD' in sendMsg:
-                        if 'ON' in sendMsg:
-                            main_frame.update_signal(f'Bad Image Capture On - {self.BtnState[j][i][1]}')
-                        else:
-                            main_frame.update_signal(f'Bad Image Capture Off - {self.BtnState[j][i][1]}')
-                    elif 'CAPINS' in sendMsg:
-                        if 'ON' in sendMsg:
-                            main_frame.update_signal(f'Ins Image Capture On - {self.BtnState[j][i][1]}')
-                        else:
-                            main_frame.update_signal(f'Ins Image Capture Off - {self.BtnState[j][i][1]}')
-                    elif 'BYPASS' in sendMsg:
-                        if 'ON' in sendMsg:
-                            main_frame.update_signal(f'Bypass On - {self.BtnState[j][i][1]}')
-                        else:
-                            main_frame.update_signal(f'Bypass Off - {self.BtnState[j][i][1]}')
-                        ConnectClientCheck = 0
-                        for i in range(len(self.BtnState[3])):
-                            if self.BtnState[3][i][0] == True:
-                                pass
-                            else:
-                                ConnectClientCheck += 1
-                        TSD.connect_count = ConnectClientCheck
-                    print(f'SendMsg - {sendMsg}')
-                    ######################################데이터 송신 필요
-                    TSD.sendAllClient(sendMsg)
-                    self.management_State_Save()
-
-        # 상태 표시 선택
-        if 37 < x < 37+113 and 13 < y < 13+23:
-            print('▶ 상태 표시 1. 비전 검사 적용 완료')
-            self.state_set('1')
-            main_frame.updatestate('1')
-
-        if 37 < x < 37+113 and 42 < y < 42+23:
-            print('▶ 상태 표시 2. 비전 검사 미적용 (세팅중)')
-            self.state_set('2')
-            main_frame.updatestate('2')
-
-        if 37 < x < 37+113 and 71 < y < 71+23:
-            print('▶ 상태 표시 3. 유효성 평가 대상')
-            self.state_set('3')
-            main_frame.updatestate('3')
-
-        if 71 < x < 163 and 714 < y < 764:
-            # self.management_State_SendAll()
-            model_frame.tkraise()
-            print('USB 모델 업로드')
-
-        if 406 < x < 502 and 714 < y < 763:
-            result = messagebox.askyesno("최종 확인", "검증 파라메터를 가져오시겠습니까?")
-            if result == True:
-                print('검증 파라메터 가져오기')
-                TSD.sendAllClient('PARAMETER')
-            else:
-                print('취소하셨습니다.')
-                # main_frame.management_mode = False
-
-        if 200 < x < 296 and 714 < y < 762:
-            print('촬영사진 가져오기')
-            threading.Thread(target=self.imageLoadingThread, daemon= True).start()
-            # result = transfer.stealdate()
-        
-         # 배출 바이패스
-        if 484 < x < 484 + 83 and 33 < y < 33 + 25 :
-            if main_frame.bypass_mode == False :
-                bypass_result = messagebox.askyesno("최종 확인", "배출 바이패스 하시겠습니까?")
-                if bypass_result :
-                    print('배출 바이패스 설정')
-                    main_frame.bypass_mode = True
-                    self.management_canvas.itemconfig(self.pass_mode, image=self.bypassbtn_on, state = 'normal')
-
-                    self.bypass_config.read('CountSave/State.INI', encoding='euc-kr')
-                    self.bypass_config.set('BYPASS', 'bypass', 'on')
-                    with open(self.bypassINI, 'w') as f:
-                        self.bypass_config.write(f)
-                else :
-                    print('배출 바이패스 취소')
-            elif main_frame.bypass_mode == True :
-                bypass_result = messagebox.askyesno("최종 확인", "배출 바이패스 해제하시겠습니까?")
-                if bypass_result :
-                    print('배출 바이패스 해제')
-                    main_frame.bypass_mode = False
-                    self.management_canvas.itemconfig(self.pass_mode, image=self.bypassbtn_off, state = 'normal')
-
-                    self.bypass_config.read('CountSave/State.INI', encoding='euc-kr')
-                    self.bypass_config.set('BYPASS', 'bypass', 'off')
-                    with open(self.bypassINI, 'w') as f:
-                        self.bypass_config.write(f)
-
-                else :
-                    print('배출 바이패스 취소')
-
-        if 483 < x < 483 + 85 and 63 < y < 63 + 26: # 프로그램 재실행 버튼
-            print(f'프로그램 재실행 선택')
-
-            result = messagebox.askyesno("최종 확인", "프로그램 재실행하시겠습니까?")
-            if result == True:
-                logger.info('[Signal] Admin program restart order')
-                main_frame.update_signal("[ ★ ] 프로그램 재실행")
-                CountDataSave()
-                TSD.sendAllClient("REBOOT")
-                STH.retry_procedure()
-            else :
-                print(f'프로그램 재실행 취소')
-
-        if 579 < x < 579 + 85 and 63 < y < 63 + 26: # 코드 업데이트 버튼(메인, 클라이언트 전부 업데이트)
-            print(f'코드 업데이트 선택')
-
-            result = messagebox.askyesno("최종 확인", "코드를 업데이트하시겠습니까?")
-            if result == True:
-                logger.info('[Signal] Admin code update order')
-                main_frame.update_signal("[ ★ ] 코드 업데이트")
-                TSD.sendAllClient("UPDATE")
-
-                repo_name = f'Main_{CodeSetup}'
-
-                try :
-                    if os.path.exists('Main_.py'):         
-                        os.remove("Main_.py")     # 기존 백업 메인 코드 삭제
-
-                    if os.path.exists('Main.py'): # 기존 메인 코드 백업         
-                        os.rename('Main.py', 'Main_.py') 
-                    git_url = f'https://github.com/KRThor/{repo_name}.git' # 코드 업데이트할 깃허브 주소
-                    self.git_clone(git_url) # 다운로드
-                    print("[★] 코드 다운로드")
-                    time.sleep(0.2)
-                    os.rename(f'{repo_name}/Main.py', 'Main.py') # 다운로드 받은 코드 경로 수정
-                    time.sleep(0.2)
-                    os.system(f'rmdir /S /Q {repo_name}') # 다운로드 받은 파일 삭제 (파일 있으면 충돌로 에러나서 업데이트 후 삭제)
-                    print("[★] 폴더 제거")
-                    time.sleep(0.2)
-                    os.system('python compile_M.py')
-                    print("[★] 코드 컴파일")
-                    print('[★] 코드 업데이트 성공')
-                    logger.info(f"[Notice] 코드 업데이트 성공")
-                except :
-                    print("[★] 코드 다운로드 실패")
-                    logger.info(f"[Notice] 코드 업데이트 실패")
-                    print(traceback.format_exc())
-
-            else :
-                print(f'코드 업데이트 취소')
-
-    def imageLoadingThread(self):
-        try:
-            self.management_canvas.itemconfig(self.imageLoading, state = 'normal')
-            self.loadingProcessTrigger = True
-            threading.Thread(target=self.loadingProcessGIF, daemon=True).start()
-            result = transfer.stealdate()
-            print(f"[★] {result}")     # 성공"시 : "SUCCESS" // 실패시 : "FAIL"
-            if result == "SUCCESS":
-                messagebox.showinfo("완료", "검증 이미지 로딩을 완료하였습니다.")
-            else:
-                messagebox.showerror("에러발생", "검증 이미지를 로딩하지 못하였습니다.")
-            self.loadingProcessTrigger = False
-            self.management_canvas.itemconfig(self.imageLoading, state = 'hidden')
-        except:
-            print(traceback.format_exc())
-
-    def loadingProcessGIF(self):
-        while True:
-            for i in range(len(self.loadingFrame)):
-                self.management_canvas.itemconfig(self.loadingGifImage, image=self.loadingFrame[i], state = 'normal')
-                time.sleep(0.1)
-                if self.loadingProcessTrigger == False:
-                    self.management_canvas.itemconfig(self.loadingGifImage, image='', state = 'hidden')
-                    return
-
-    def management_State_Save(self):
-        WriteJsonData = dict()
-        WriteJsonData["BtnState"] = self.BtnState
-        if CodeSetup == 'CONE':
-            with open('CheckValue/management.json', 'w', encoding='utf-8') as make_file:
-                json.dump(WriteJsonData, make_file, indent="\t")
-        else:
-            with open('CheckValue/management.json', 'w', encoding='utf-8') as make_file:
-                json.dump(WriteJsonData, make_file, indent="\t")
-
-    def management_State_Load(self):
-        global ConnectClientCheck
-        if CodeSetup == 'CONE':
-            if os.path.isfile('CheckValue/management.json'):
-                with open('CheckValue/management.json', 'r') as read_file:
-                    ReadJsonData = json.load(read_file)
-                self.BtnState = ReadJsonData['BtnState'].copy()
-                ConnectClientCheck = 0
-                for i in range(len(self.BtnState[3])):
-                    if self.BtnState[3][i][0] == True:
-                        pass
-                    else:
-                        ConnectClientCheck += 1
-                print(ConnectClientCheck)
-            else:
-                pass
-        else:
-            if os.path.isfile('CheckValue/management.json'):
-                with open('CheckValue/management.json', 'r') as read_file:
-                    ReadJsonData = json.load(read_file)
-                self.BtnState = ReadJsonData['BtnState'].copy()
-                ConnectClientCheck = 0
-                for i in range(len(self.BtnState[3])):
-                    if self.BtnState[3][i][0] == True:
-                        pass
-                    else:
-                        ConnectClientCheck += 1
-                print(ConnectClientCheck)
-            else:
-                pass
-
-    def management_State_SendAll(self):
-        for j in range(4):
-            for i in range(len(self.ManagementBtnIndex[j])):
-                self.management_canvas.itemconfig(self.ManagementBtnImg[j][int(i/2)][int(i%2)], state = 'normal' if self.BtnState[j][i][0] else 'hidden')
-                sendMsg = f'{self.ManagementTrigger[j]}ON{self.BtnState[j][i][1]}' if self.BtnState[j][i][0] else f'{self.ManagementTrigger[j]}OFF{self.BtnState[j][i][1]}'
-                print(sendMsg)
-                TSD.sendAllClient(sendMsg)
-
-
-class ModelManageFrame(tk.Frame):
-    def __init__(self, master=None, db_inst=''):
-        super().__init__(master)
-        self.master = master
-
-        # image sources
-        self.model_bg_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/bg_managing_model.png')
-        self.confirm_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/btn_confirm.png')
-        self.update_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/btn_update.png')
-        self.change_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/btn_change.png')
-        
-        self.db = db_inst
-
-        # image sources
-        self.model_bg_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/bg_managing_model.png')
-        self.confirm_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/btn_confirm.png')
-        self.update_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/btn_update.png')
-        self.change_img = ImageTk.PhotoImage(file = f'bg/{BgSetup}/btn_change.png')
-
-        # loading gif
-        self.loading_img_frame = []
-        loading_gif = Image.open(f"bg/{BgSetup}/loading.gif")
-        index = 0
-        for frame in ImageSequence.Iterator(loading_gif):
-            np_frame = np.asarray(frame)
-            frame_tk = ImageTk.PhotoImage(frame)
-            self.loading_img_frame.append(frame_tk)
-            # print('\n\n', len(self.loading_img_frame)) #24
-            index += 1
-        
-        # variables
-        self.model_update_mode = False
-        self.model_change_mode = False
-
-        self.create_widgets()
-
-    def create_widgets(self):
-        self.grid(row = 0, column = 0)
-        self.model_canvas = tk.Canvas(self, width = 600, height = 750)
-        self.model_bg_image = self.model_canvas.create_image(0, 0, image = self.model_bg_img, anchor = 'nw')
-        self.confirm_img_on = self.model_canvas.create_image(298, 674, image = self.confirm_img, anchor = 'nw', state = 'hidden')
-        self.update_img_on = self.model_canvas.create_image(35, 91, image = self.update_img, anchor = 'nw', state = 'hidden')
-        self.change_img_on = self.model_canvas.create_image(169, 91, image = self.change_img, anchor = 'nw', state = 'hidden')
-
-        # model list up
-        # self.model_list = tk.Listbox(self.model_canvas, fg = 'black',  font=('gothic', 10), selectmode='extended')
-        self.model_list = tk.Listbox(self.model_canvas, fg = 'black',  font=('gothic', 10) )
-        self.model_list.place(x=68, y=195, width=440, height=425)
-
-        self.model_list_scrollbar_y = tk.Scrollbar(self.model_canvas, orient="vertical")
-        self.model_list_scrollbar_y.config(command=self.model_list.yview)
-        self.model_list_scrollbar_y.place(x=68+440, y=195, width=15, height=425)
-        self.model_list.config(yscrollcommand=self.model_list_scrollbar_y.set)
-
-        self.model_list_scrollbar_x = tk.Scrollbar(self.model_canvas, orient="horizontal")
-        self.model_list_scrollbar_x.config(command=self.model_list.xview)
-        self.model_list_scrollbar_x.place(x=68, y=195+425, width=440+15, height=15)
-        self.model_list.config(xscrollcommand=self.model_list_scrollbar_x.set)  
-        
-        self.model_list.place_forget()
-        self.model_list_scrollbar_y.place_forget()
-        self.model_list_scrollbar_x.place_forget()
-
-        # databse list up
-        # self.db_list = tk.Listbox(self.model_canvas, fg = 'black', font=('gothic', 10), selectmode='extended')
-        self.db_list = tk.Listbox(self.model_canvas, fg = 'black', font=('gothic', 10))
-        self.db_list.place(x=68, y=195, width=450, height=435)
-
-        self.db_list_scrollbar_y = tk.Scrollbar(self.model_canvas, orient="vertical")
-        self.db_list_scrollbar_y.config(command=self.db_list.yview)
-        self.db_list_scrollbar_y.place(x=68+440, y=195, width=15, height=425)
-        self.db_list.config(yscrollcommand=self.db_list_scrollbar_y.set)
-
-        self.db_list_scrollbar_x = tk.Scrollbar(self.model_canvas, orient="horizontal")
-        self.db_list_scrollbar_x.config(command=self.db_list.xview)
-        self.db_list_scrollbar_x.place(x=68, y=195+425, width=440+15, height=15)
-        self.db_list.config(xscrollcommand=self.db_list_scrollbar_x.set) 
-
-        self.db_list.place_forget()
-        self.db_list_scrollbar_y.place_forget()
-        self.db_list_scrollbar_x.place_forget()
-
-        font_main = ("Calibri", 14)
-        # get product
-        with open('CheckValue/product_info.json') as json_file:
-            json_data = json.load(json_file)
-        self.common_model_name = json_data[LINE][CodeSetup][0]
-
-        values_product = ['ALL']
-        values_product = values_product + json_data[LINE][CodeSetup][1]            
-        self.select_product = ttk.Combobox(self, width = 8, justify = 'center', values= values_product, font= font_main, state = "readonly")
-        self.select_product.current(0)
-        self.show_product = self.model_canvas.create_window(310, 110, anchor='nw', window='')
-
-        # get cam_name : 내륜 111~116 / 외륜 101~105
-        if CodeSetup == 'CUP':
-            values_cam = ['ALL']
-            values_cam = values_cam + list(range(101, 106))
-        else:
-            values_cam = ['ALL']
-            values_cam = values_cam + list(range(111, 117))
-        self.select_cam = ttk.Combobox(self, width = 8, justify = 'center', values= values_cam, font= font_main, state = "readonly")
-        self.select_cam.current(0)
-        self.show_cam = self.model_canvas.create_window(415, 110, anchor='nw', window='')
-
-        self.search_button = tk.Button(self, text=' V ', fg = 'black', command=self.get_db_values)
-        self.search_button['font'] = ("Calibri", 10, 'bold')
-        self.search_button.place_forget()
-
-        # loading imgs
-        self.loading_on = self.model_canvas.create_image(300, 375, image=self.loading_img_frame[0], anchor="center", state="hidden")
-
-        self.model_canvas.bind('<Button-1>', self.model_btn)
-        self.model_canvas.pack()      
-
-   
-    def animate_loading(self, mode):
-        if mode == 'UPLOAD':
-            self.model_list.place_forget()
-            self.model_list_scrollbar_y.place_forget()
-            self.model_list_scrollbar_x.place_forget()
-            self.master.update()
-
-            while True:
-                if transfer.done_check == 'LOADING':
-                    for f_num in range(len(self.loading_img_frame)):
-                        time.sleep(0.1)
-                        self.model_canvas.itemconfig(self.loading_on, image=self.loading_img_frame[f_num], state = 'normal')
-                        self.master.update()
-                else:
-                    self.model_canvas.itemconfig(self.loading_on, image='', state = 'hidden')
-                    self.master.update()
-                    if transfer.done_check == 'SUCCESS':
-                        self.db.update_sql()
-                        answer = messagebox.showinfo('INFO', '모델 업데이트 완료')
-                        self.model_canvas.itemconfig(self.loading_on, image='', state = 'hidden')
-                    elif transfer.done_check == 'FAIL':
-                        answer = messagebox.showerror('ERROR', '모델 업데이트 에러')
-                        self.model_canvas.itemconfig(self.loading_on, image='', state = 'hidden')
-                    break
-
-        elif mode == 'CHANGE':
-            self.db_list.place_forget()
-            self.db_list_scrollbar_y.place_forget()
-            self.db_list_scrollbar_x.place_forget()
-            self.master.update()
-
-            while True:
-                if transfer.modelbackup_result == 'LOADING':
-                    for f_num in range(len(self.loading_img_frame)):
-                        time.sleep(0.1)
-                        self.model_canvas.itemconfig(self.loading_on, image=self.loading_img_frame[f_num], state = 'normal')
-                        self.master.update()
-                else:
-                    self.model_canvas.itemconfig(self.loading_on, image='', state = 'hidden')
-                    self.master.update()
-                    if transfer.modelbackup_result == 'SUCCESS':
-                        answer = messagebox.showinfo('INFO', '모델 변경 완료')
-                        self.model_canvas.itemconfig(self.loading_on, image='', state = 'hidden')
-                    elif transfer.modelbackup_result == 'FAIL':
-                        answer = messagebox.showerror('ERROR', '모델 변경 에러')
-                        self.model_canvas.itemconfig(self.loading_on, image='', state = 'hidden')
-                    break
-                # time check > break
-     
-
-    def showup_model_list(self):
-        try:
-            self.model_list.delete(0, 'end')
-            self.db_list.delete(0, 'end')
-        except:
-            pass
-
-        self.model_canvas.itemconfig(self.show_product, window=self.select_product, state = 'hidden')
-        self.model_canvas.itemconfig(self.show_cam, window=self.select_cam, state = 'hidden')
-        self.db_list.place_forget()
-        self.db_list_scrollbar_x.place_forget()
-        self.model_list_scrollbar_x.place_forget()
-        self.search_button.place_forget()
-
-        self.model_list.place(x=68, y=195, width=440, height=425)
-        self.model_list_scrollbar_y.place(x=68+440, y=195, width=15, height=425)
-        self.model_list_scrollbar_x.place(x=68, y=195+425, width=440+15, height=15)
-
-        # json 파싱 후 해당 라인 업로드 정보 이중리스트로 저장
-        self.modelinfo_list = jsonparser.USBjsonparser() 
-        # print(self.modelinfo_list,'\n\n\n')
-
-        self.update_model_list = [None]*len(self.modelinfo_list)
- 
-        self.model_list.insert(0, '[ 구분 ]  [ 라인 ]        [ 기종 ]        [ 카메라 ]  [ 모델 LOT ]    [ 코멘트 ]')
-        self.model_list.insert(1, ' ')
-
-        for idx, row in enumerate(self.modelinfo_list[::-1]):
-            # print('\n', row)
-            self.update_model_list[idx] = f"   {idx+1:02d}      " # idx
-            self.update_model_list[idx] += "%-12s" % LINE     # line
-
-            # ip, username, passwd, modelname, camnum, modelpath, modelversion, comment
-            self.update_model_list[idx] += "%-20s" % row[3]  # MODEL_NAME
-            self.update_model_list[idx] += "%-12s" % row[4]  # CAM_NUM
-            self.update_model_list[idx] += "%-12s" % row[6]  # modelversion
-            self.update_model_list[idx] += "%-20s" % row[7]  # comment
-
-            self.model_list.insert(idx+2, self.update_model_list[idx])
-
-
-    def get_db_values(self):
-        # select catergory
-        self.select_product_now = self.select_product.get()
-        self.select_cam_now = self.select_cam.get()
-        # print('1: ', self.select_product_now, '2: ', self.select_cam_now)
-        
-        # show db list
-        try:
-            self.db_list.delete(0, 'end')
-        except:
-            pass
-        
-        self.showup_db_list()
-        
-        # show confirm button
-        self.model_canvas.itemconfig(self.confirm_img_on, state = 'normal')
-        
-
-    def get_db_list(self):
-        try:
-            self.model_list.delete(0, 'end')
-            self.db_list.delete(0, 'end')
-        except:
-            pass
-
-        self.model_canvas.itemconfig(self.show_product, window=self.select_product, state= 'normal')
-        self.model_canvas.itemconfig(self.show_cam, window=self.select_cam, state= 'normal')
-        self.search_button.place(x=525, y=112)	
-
-
-    def showup_db_list(self):
-        self.model_list.place_forget()
-        self.model_list_scrollbar_y.place_forget()
-        self.model_list_scrollbar_x.place_forget() 
-
-        self.db_list.place(x=68, y=195, width=450, height=435)
-        self.db_list_scrollbar_y.place(x=68+440, y=195, width=15, height=425)
-        self.db_list_scrollbar_x.place(x=68, y=195+425, width=440+15, height=15)
-
-        # read sql
-        self.sql_values = self.db.read_sql(Product=self.select_product_now, Cam=self.select_cam_now)
-        self.update_db_list = [None]*len(self.sql_values)
-
-        self.db_list.insert(0, '[ 구분 ]     [ 업데이트날짜 ]      [ 라인 ]         [ 기종 ]        [ 카메라 ] [ 모델 LOT ]    [ 코멘트 ]')
-        self.db_list.insert(1, ' ')
-
-        for idx, row in enumerate(self.sql_values[::-1]):
-            # print('\n', row)
-            self.update_db_list[idx] = f"   {idx+1:02d}      " #idx
-            self.update_db_list[idx] += f"{row[6]}      " #date
-            self.update_db_list[idx] += "%-12s" % row[1] # line
-            self.update_db_list[idx] += "%-20s" % row[2] # product name
-            self.update_db_list[idx] += "%-12s" % row[3] # camera
-            self.update_db_list[idx] += "%-12s" % row[4] # model lot
-            self.update_db_list[idx] += "%-20s" % row[5] # comment
-            
-            self.db_list.insert(idx+2, self.update_db_list[idx])
-        # print('showup_db_list')
-
-
-    def model_btn(self, event):
-        x, y = event.x, event.y
-        print(f'model btn clicked! x: {x}, y: {y}')
-
-        # 모델 업데이트 버튼
-        if 40 < x < (40+115) and 95 < y < (95+50):
-            self.model_canvas.itemconfig(self.confirm_img_on, state = 'normal')
-            self.model_canvas.itemconfig(self.update_img_on, state = 'normal')
-            self.model_canvas.itemconfig(self.change_img_on, state = 'hidden')
-
-            self.model_update_mode = True
-            self.model_change_mode = False  
-
-            try:
-                self.db_list.delete(0, 'end')
-            except:
-                pass
-
-            self.showup_model_list()
-            # print('모델 업데이트')
-           
-        # 모델 변경 버튼
-        if 178 < x < (178+115) and 95 < y < (95+50):
-            self.model_canvas.itemconfig(self.change_img_on, state = 'normal')
-            self.model_canvas.itemconfig(self.update_img_on, state = 'hidden')
-
-            self.model_update_mode = False
-            self.model_change_mode = True  
-
-            self.get_db_list() 
-            # print('모델 변경')
-
-        # 적용 버튼
-        if 300 < x < (300+115) and 680 < y < (680+50):
-            # 모델 업데이트 적용
-            if self.model_update_mode:
-                self.model_canvas.itemconfig(self.update_img, state = 'hidden')
-                self.model_canvas.itemconfig(self.change_img, state = 'hidden')
-                selected_1 = self.model_list.curselection()
-                # print(selected_1)
-                if selected_1 == ():
-                    answer = messagebox.showinfo('INFO', '모델을 선택해주세요')
-                else:
-                    # loading gif
-                    transfer.done_check = 'LOADING'
-                    Thread(target = self.animate_loading, args=['UPLOAD'], daemon=True).start()
-                    
-                    for idx_1 in selected_1[::-1]:
-                        # 다중 선택 값 가져오기
-                        selected_list_1 = self.model_list.get(idx_1)
-                        # 리스트 내 공백 제거
-                        values_1 = selected_list_1.split('  ')
-                        values_1 = [s1 for s1 in values_1 if s1]       
-                        print('\n\n\n', values_1)               
-                        
-                        # 모델 업로드
-                        ip = self.modelinfo_list[::-1][idx_1-2][0]
-                        username = self.modelinfo_list[::-1][idx_1-2][1]
-                        passwd = self.modelinfo_list[::-1][idx_1-2][2]
-                        modelname = self.modelinfo_list[::-1][idx_1-2][3] # ST32451
-                        camnum = self.modelinfo_list[::-1][idx_1-2][4] # CAM101
-                        modelpath = self.modelinfo_list[::-1][idx_1-2][5]
-                        modelversion = self.modelinfo_list[::-1][idx_1-2][6]
-                        comment = self.modelinfo_list[::-1][idx_1-2][7]
-
-                        #################################################################### update 22.05.10
-                        # 형번 확인
-                        DTT.product_infoJson_Load()
-                        if self.common_model_name != []:
-                            for common_model_name_value in self.common_model_name:
-                                if modelname in common_model_name_value:
-                                    update_modelname = common_model_name_value
-                                else:
-                                    update_modelname = [modelname]
-                        else:
-                            update_modelname = [modelname]
-  
-                        print('[INFO] update_model: ', update_modelname)
-
-                        Thread(target = transfer.modelupload, args=[ip, username, passwd, update_modelname, camnum, modelpath, modelversion, comment], daemon=True).start()
-                        # print(f"[★] {transfer.done_check}")  # 성공시 : "SUCCESS" // 실패시 : "FAIL"
-
-                        # DB 입력
-                        self.db.update_data[1] = values_1[1].strip() # line
-                        self.db.update_data[2] = values_1[2].strip() # product_name
-                        self.db.update_data[3] = values_1[3].strip() # cam_name
-                        self.db.update_data[4] = values_1[4].strip() # model_lot
-                        self.db.update_data[5] = values_1[5].strip() # notes 
-                        ####################################################################                                                   
-
-            # 모델 변경 적용
-            if self.model_change_mode:
-                # print('0. 모델 변경 적용 클릭')
-                self.model_canvas.itemconfig(self.update_img, state = 'hidden')
-                self.model_canvas.itemconfig(self.change_img, state = 'hidden')
-
-                selected_2 = self.db_list.curselection()
-                if selected_2 == ():
-                    answer = messagebox.showinfo('INFO', '모델을 선택해주세요')
-                else:
-                    # loading gif
-                    transfer.modelbackup_result = 'LOADING'
-                    Thread(target = self.animate_loading, args=['CHANGE'], daemon=True).start()
-                    
-                    for idx_2 in selected_2[::-1]:                        
-                        # 다중 선택 값 가져오기
-                        selected_list_2 = self.db_list.get(idx_2)
-                        # print('\nselected_list_2', selected_list_2)
-                        # 리스트 나누기
-                        values_2 = selected_list_2.split('  ')
-                        str_match_2 = [s2 for s2 in values_2 if s2]
-                        # print('\n\nstr_match_2', str_match_2)
-
-                        modelname = str_match_2[3].strip()
-                        camnum = str_match_2[4].strip()
-                        modelversion =  str_match_2[5].strip()
-
-                        # print('\n\ncamnum', camnum)
-                        ip, username, passwd = jsonparser.getUSERinfo(camnum)
-                        
-                        #################################################################### update 22.05.10
-                        # 형번 확인
-                        DTT.product_infoJson_Load()
-                        if self.common_model_name != []:
-                            for common_model_name_value in self.common_model_name:
-                                if modelname in common_model_name_value:
-                                    change_modelname = common_model_name_value
-                                else:
-                                    change_modelname = [modelname]
-                        else:
-                            change_modelname = [modelname]                                    
-                        ####################################################################   
-                             
-                        print('[INFO] change_model: ', change_modelname)                           
-                        Thread(target = transfer.modelbackup, args=[ip, username, passwd, change_modelname, camnum, modelversion], daemon=True).start()
-                        # print(f"[★] {transfer.modelbackup_result}")      # 성공시 : "SUCCESS" // 실패시 : "FAIL"
-
-        # 취소 버튼
-        if 440 < x < (440+115) and 680 < y < (680+50):
-            # init
-            self.model_update_mode = False
-            self.model_change_mode = False
-
-            self.model_list.delete(0, 'end')
-            self.db_list.delete(0, 'end')
-
-            self.model_canvas.itemconfig(self.confirm_img, state = 'hidden')
-            self.model_canvas.itemconfig(self.update_img, state = 'hidden')
-            self.model_canvas.itemconfig(self.change_img, state = 'hidden')
-
-            main_frame.tkraise()
-
-  
-            
-class TransferSocketData(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-
-        # HOST = '192.168.222.114'
-        # HOST = '192.168.43.149'
-        PORT = 9999
-        # 소켓 객체를 생성합니다.
-        # 주소 체계(address family)로 IPv4, 소켓 타입으로 TCP 사용합니다.
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # 포트 사용중이라 연결할 수 없다는
-        # WinError 10048 에러 해결를 위해 필요합니다.
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # HOST는 hostname, ip address, 빈 문자열 ""이 될 수 있습니다.
-        # 빈 문자열이면 모든 네트워크 인터페이스로부터의 접속을 허용합니다.
-        # PORT는 1-65535 사이의 숫자를 사용할 수 있습니다.
-        self.server_socket.bind((MAINHOST, PORT))
-        self.server_socket.listen()
-
-        self.allClient = []
-
-        self.connect_count = 0
-        self.connect_check = False
-        self.allClientAddr = []
-
-        self.cilentIP = list(None for i in range(5))
-
-        print("Server Start")
-
-    def recvall(self, sock, count):
-        buf = b""
-        while count:
-            newbuf = sock.recv(count)
-            if not newbuf:
-                return None
-            buf += newbuf
-            count -= len(newbuf)
-        return buf
-
-    def threaded(self, client_socket, addr):
-        print("Connected by :", addr[0], ":", addr[1])
-        logger.info(f"[Notice] Connected by : {addr[0]} : {addr[1]}")
-        my_client = 0
-
-        while True:
-            try:
-                data = self.recvall(client_socket, 20)
-
-                if data == None:
-                    print("Disconnected by " + addr[0], ":", addr[1], "(no data)")
-                    break
-
-                try:
-                    recvData = data.decode().strip()
-                    print("socket recv : ", recvData)
-                except:
-                    recvData = ""
-                    logger.info(f'[Check] Recv Data is Different')
-                # print(recvData)
-
-                if recvData == "TOPCAPCOMP":
-                    print("[INFO] TOPCAPCOMP 수신 : ", time.time() - STH.startTime)
-                    logger.info(f'[INFO] TOPCAPCOMP 수신')
-                    # while True:
-                    #     if CTH.CapCompMain == True:
-                    #         break
-                    #     time.sleep(0.1)
-                    #     print("메인 상부 촬영 대기중")
-
-                    # self.sendAllClient('SIDEINSSTART')
-
-                if "COMP" in recvData:
-                    # DataIndex = int(recvData[4:5])
-                    print(f"Notice : [Recive Data {recvData}]")
-                    logger.info(f'[INFO] Model Loading Complete by Client - {recvData}')
-                    main_frame.update_signal(f'Loading Complete by Client - {recvData}')
-                    DTT.AllCompRecv += 1
-
-                # GPU 확인 텍스트 추가 2022-12-09 OH
-                if "GPUNG" in recvData: 
-                    camidx = recvData[6:7]
-                    if camidx == '1' :
-                        main_frame.main_canvas.itemconfig(main_frame.gputext1, state = 'normal')
-                    elif camidx == '2':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext2, state = 'normal')
-                    elif camidx == '3':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext3, state = 'normal')
-                    elif camidx == '4':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext4, state = 'normal')
-                    elif camidx == '5':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext5, state = 'normal')
-                    elif camidx == '6':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext6, state = 'normal')
-
-                # GPU 확인 텍스트 추가 2022-12-09 OH
-                if "GPUOK" in recvData: 
-                    camidx = recvData[6:7]
-                    if camidx == '1' :
-                        main_frame.main_canvas.itemconfig(main_frame.gputext1, state = 'hidden')
-                    elif camidx == '2':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext2, state = 'hidden')
-                    elif camidx == '3':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext3, state = 'hidden')
-                    elif camidx == '4':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext4, state = 'hidden')
-                    elif camidx == '5':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext5, state = 'hidden')
-                    elif camidx == '6':
-                        main_frame.main_canvas.itemconfig(main_frame.gputext6, state = 'hidden')
-                        
-                if "RESULT" in recvData:
-                    DataIndex = int(recvData[6:7])
-                    print(DataIndex)
-                    if STH.ManualMode == True:
-                        print(f"Notice : [Receive Data RESULT{DataIndex}]-menual")
-                        result_value_data = self.recvall(client_socket, 100)
-                        result_value = result_value_data.decode().strip()
-                        print(result_value)
-                        print(DTT.CompResultList)
-                        DTT.CompResultList[DataIndex] = result_value
-                        DTT.AllDataRecv += 1
-
-                        # length_Blur = self.recvall(client_socket, 20)
-                        # binData_Blur = self.recvall(client_socket, int(length_Blur))
-                        # decBlur = pickle.loads(binData_Blur)
-                        # DTT.CompBlurDataList[DataIndex] = decBlur.copy()
-
-                        length = self.recvall(client_socket, 20)
-                        binData = self.recvall(client_socket, int(length))
-                        # data = np.frombuffer(stringData, dtype='uint8')
-                        # decimg=cv2.imdecode(data,1)
-                        decimg = pickle.loads(binData)
-                        # type(decimg)
-                        DTT.CompImageList[DataIndex] = decimg.copy()
-                        # (W, H) = DTT.CompImageList[DataIndex][0].shape[:2]
-                        # print(W,H)
-                        print(f"RESULT{DataIndex} : {DTT.CompResultList}")
-                        print(
-                            f"[INFO]ResultImage Recv, Client{DataIndex} : ", time.time() - STH.startTime,
-                        )
-                        DTT.AllImageRecv += 1
-                    else:
-                        if (0 < DataIndex < 4) if CodeSetup == "CONE" else (0 < DataIndex < 3):
-                            print(f"Notice : [Receive Data RESULT{DataIndex}]")
-                            result_value_data = self.recvall(client_socket, 100)
-                            result_value = result_value_data.decode().strip()
-                            DTT.frontDataList[0][DataIndex - 1] = result_value
-                            DTT.AllDataRecv += 1
-
-                            # length_Blur = self.recvall(client_socket, 20)
-                            # binData_Blur = self.recvall(client_socket, int(length_Blur))
-                            # decBlur = pickle.loads(binData_Blur)
-                            # DTT.frontBlurDataList[0][DataIndex - 1] = decBlur.copy()
-
-                            length = self.recvall(client_socket, 20)
-                            binData = self.recvall(client_socket, int(length))
-                            # data = np.frombuffer(stringData, dtype='uint8')
-                            # decimg=cv2.imdecode(data,1)
-                            decimg = pickle.loads(binData)
-                            DTT.frontImageList[0][DataIndex - 1] = decimg.copy()
-                            print(f"RESULT{DataIndex} : {DTT.frontDataList}")
-                            print(
-                                f"[INFO]ResultImage Recv, Client{DataIndex} : ", time.time() - STH.startTime,
-                            )
-                            DTT.AllImageRecv += 1
-
-                        elif (DataIndex >= 4 if CodeSetup == "CONE" else DataIndex >= 3) or DataIndex == 0:
-                            print(f"Notice : [Receive Data RESULT{DataIndex}]")
-                            result_value_data = self.recvall(client_socket, 100)
-                            result_value = result_value_data.decode().strip()
-                            DTT.CompResultList[DataIndex] = result_value
-                            DTT.AllDataRecv += 1
-
-                            # length_Blur = self.recvall(client_socket, 20)
-                            # binData_Blur = self.recvall(client_socket, int(length_Blur))
-                            # decBlur = pickle.loads(binData_Blur)
-                            # DTT.CompBlurDataList[DataIndex] = decBlur.copy()
-
-                            length = self.recvall(client_socket, 20)
-                            binData = self.recvall(client_socket, int(length))
-                            # data = np.frombuffer(stringData, dtype='uint8')
-                            # decimg=cv2.imdecode(data,1)
-                            decimg = pickle.loads(binData)
-                            # type(decimg)
-                            DTT.CompImageList[DataIndex] = decimg.copy()
-                            # (W, H) = DTT.CompImageList[DataIndex][0].shape[:2]
-                            # print(W,H)
-                            print(f"RESULT{DataIndex} : {DTT.CompResultList}")
-                            print(
-                                f"[INFO]ResultImage Recv, Client{DataIndex} : ", time.time() - STH.startTime,
-                            )
-                            DTT.AllImageRecv += 1
-                    logger.info(f"Notice - RESULT {DataIndex} Recv / DataRecvCount : {DTT.AllDataRecv} / ImageRecvCount : {DTT.AllImageRecv}")
-                    print(DTT.AllDataRecv, DTT.AllImageRecv)
-
-                if "PICKLE" in recvData:
-                    try:
-                        DataIndex = recvData[6:7]
-                        updateX = DTT.PickleDict[recvData][0]
-                        updateY = DTT.PickleDict[recvData][1]
-                        strListData = self.recvall(client_socket, 500)
-                        strListData = strListData.decode("utf-8")
-                        DTT.pickleListData[int(DataIndex)] = eval(strListData)
-                        print(DTT.pickleListData[int(DataIndex)])
-                        main_frame.makeLabelWindow(updateX, updateY, DTT.pickleListData[int(DataIndex)], (int(DataIndex)))
-                    except Exception as ex:
-                        logger.info(f"[NOTICE] Pickle Data Recv Error : {traceback.format_exc()}")
-                        print(traceback.format_exc())
-
-                if "DATAREQUEST" in recvData:
-                    DataIndex = int(recvData[11:12])
-                    sendData = str(DTT.pickleListData[DataIndex])
-                    client_socket.send(sendData.ljust(500).encode())
-
-                if recvData == "CLIENT0":
-                    # self.cilentIP[0] = str(addr[0])
-                    my_client = "0"
-                    main_frame.main_canvas.itemconfig(main_frame.connectionCheck[0], state="normal")
-                    ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[0], state="normal")
-                    logger.info(f'[Notice] {recvData} Connect Check')
-                elif recvData == "CLIENT1":
-                    self.cilentIP[0] = str(addr[0])
-                    my_client = "1"
-                    main_frame.main_canvas.itemconfig(main_frame.connectionCheck[1], state="normal")
-                    ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[1], state="normal")
-                    logger.info(f'[Notice] {recvData} Connect Check')
-                elif recvData == "CLIENT2":
-                    self.cilentIP[1] = str(addr[0])
-                    my_client = "2"
-                    main_frame.main_canvas.itemconfig(main_frame.connectionCheck[2], state="normal")
-                    ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[2], state="normal")
-                    logger.info(f'[Notice] {recvData} Connect Check')
-                elif recvData == "CLIENT3":
-                    self.cilentIP[2] = str(addr[0])
-                    my_client = "3"
-                    main_frame.main_canvas.itemconfig(main_frame.connectionCheck[3], state="normal")
-                    ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[3], state="normal")
-                    logger.info(f'[Notice] {recvData} Connect Check')
-                elif recvData == "CLIENT4":
-                    self.cilentIP[3] = str(addr[0])
-                    my_client = "4"
-                    main_frame.main_canvas.itemconfig(main_frame.connectionCheck[4], state="normal")
-                    ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[4], state="normal")
-                    logger.info(f'[Notice] {recvData} Connect Check')
-                elif recvData == "CLIENT5":
-                    self.cilentIP[4] = str(addr[0])
-                    my_client = "5"
-                    main_frame.main_canvas.itemconfig(main_frame.connectionCheck[5], state="normal")
-                    ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[5], state="normal")
-                    logger.info(f'[Notice] {recvData} Connect Check')
-
-                data = ""
-
-                if 'NGFRAME' in recvData:
-                    ng_client_num = recvData[:3]
-                    ng_part_num = recvData[10]
-                    ngname = recvData[11:]
-
-                    length = self.recvall(client_socket, 20)
-                    binData = self.recvall(client_socket, int(length))
-                    decimg = pickle.loads(binData)
-                    
-                    NF.save_new_image_and_remove_oldest('NG', decimg, ng_client_num, ng_part_num, ngname)
-
-                if 'OKFRAME' in recvData:
-                    ok_client_num = recvData[:3]
-                    ok_part_num = recvData[10]
-                    okname = recvData[11:]
-
-                    length = self.recvall(client_socket, 20)
-                    binData = self.recvall(client_socket, int(length))
-                    decimg = pickle.loads(binData)
-                    
-                    NF.save_new_image_and_remove_oldest('OK', decimg, ok_client_num, ok_part_num, okname)
-
-            except:
-                print("Disconnected by " + addr[0], ":", addr[1], "(error)", traceback.format_exc())
-                logger.info(f'[NOTICE] Disconnected by  + {addr[0]} : {addr[1]} \n {traceback.format_exc()}')
-                break
-
-        logger.info(f"[NOTICE] Disconnected by  + {addr[0]} : {addr[1]} \n {traceback.format_exc()}")
-        if my_client == "0":
-            main_frame.main_canvas.itemconfig(main_frame.connectionCheck[0], state="hidden")
-            ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[0], state="hidden")
-        elif my_client == "1":
-            main_frame.main_canvas.itemconfig(main_frame.connectionCheck[1], state="hidden")
-            ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[1], state="hidden")
-        elif my_client == "2":
-            main_frame.main_canvas.itemconfig(main_frame.connectionCheck[2], state="hidden")
-            ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[2], state="hidden")
-        elif my_client == "3":
-            main_frame.main_canvas.itemconfig(main_frame.connectionCheck[3], state="hidden")
-            ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[3], state="hidden")
-        elif my_client == "4":
-            main_frame.main_canvas.itemconfig(main_frame.connectionCheck[4], state="hidden")
-            ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[4], state="hidden")
-        elif my_client == "5":
-            main_frame.main_canvas.itemconfig(main_frame.connectionCheck[5], state="hidden")
-            ngcage_frame.ngcage_canvas.itemconfig(ngcage_frame.connectionCheck[5], state="hidden")
-
-        self.allClient.remove(client_socket)
-        self.allClientAddr.remove(addr[0])
-        self.connect_count -= 1
-        if self.connect_count < 0:
-            self.connect_count = 0
-
-        if self.connect_count != ConnectClientCheck:
-            self.connect_check = False
-
-        client_socket.close()
-        print("Client Closed")
-        logger.info(f"Warning : Client Thread Closed - {my_client}")
-        main_frame.update_signal(f"Client{my_client} Disconnect")
-
-    def sendAllClient(self, msg, length=20):
-        if isinstance(msg, str):
-            for client in self.allClient:
-                # print('send ip : ',client, 'msg : ',msg.ljust(length))
-                client.send(msg.ljust(length).encode())
-        else:
-            for client in self.allClient:
-                client.send(msg)
-
-    def run(self):
-        time.sleep(5)
-        while True:
-            # 서버소켓은 accept() 함수에서 기다리다가 클라이언트 소켓으로부터 신호가 오면 메시지와 주소를 받는다.
-            client_socket, addr = self.server_socket.accept()
-            # time.sleep(1)
-            addrData = addr[0]
-            self.allClient += [client_socket]
-            self.allClientAddr += [addrData]
-            # 각각의 클라이언트 소켓들을 새로운 쓰레드로 할당한다.
-            start_new_thread(self.threaded, (client_socket, addr))
-            self.connect_count += 1
-            print("Notice : [Now Connecting Member = {}]".format(self.connect_count))
-            if self.connect_count >= ConnectClientCheck:
-                self.connect_check = True
-                main_frame.update_signal("Client All Connect")
-            # self.recvAllClient()
-            time.sleep(0.01)
-
-
-class DataTrimThread(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-        self.inspectionSession = False
-        self.CompImageList = [[], [], [], [], [], []]
-        self.CompResultList = ["10000000000000"] * (6 if CodeSetup == "CONE" else 5)
-        # self.CompTypeList = [None] * 6
-        self.AllDataRecv = 0
-        self.AllImageRecv = 0
-        self.AllCompRecv = 0
-        self.imgSaveCount = 0
-        self.modelLoadingCheck = False
-        self.OKdata = "00000000000000"
-        self.NoneData = "10000000000000"
-        self.NgCage1Setup = [1,2,3,4,5]
-
-        #카메라 블러처리 리미트 셋업
-        if CodeSetup == 'CONE':
-            self.CameraBlurLimit = {
-                'CLIENT0' : [1,2],
-                'CLIENT1' : [1,2],
-                'CLIENT2' : [1,2],
-                'CLIENT3' : [1,2],
-                'CLIENT4' : [1,2],
-                'CLIENT5' : [1,2],
-            }
-        else:
-            self.CameraBlurLimit = {
-                'CLIENT0' : [300,400],
-                'CLIENT1' : [300,400],
-                'CLIENT2' : [50,100],
-                'CLIENT3' : [300,400],
-                'CLIENT4' : [300,400],
-            }
-        #카메라 블러처리 결과데이터
-        self.CompBlurDataList = [[],[],[],[],[],[]] if CodeSetup == "CONE" else [[], [], [], [], []]
-        self.frontBlurDataList = [[[],[],[]], [[],[],[]], [[],[],[]], [[],[],[]]]
-
-        self.forceClientNgData = {
-            'CLIENT0' : '00000000100000',
-            'CLIENT1' : '00000001000000',
-            'CLIENT2' : '00000000010000' if CodeSetup == 'CUP' else '00000000001000',
-            'CLIENT3' : '00000000000001' if CodeSetup == 'CUP' else '00000000010000',
-            'CLIENT4' : '00000000000010' if CodeSetup == 'CUP' else '00000000000100',
-            'CLIENT5' : '10000000000000' if CodeSetup == 'CUP' else '00000000000100'
-        }
-
-        self.frontDataList = [
-            [self.NoneData, self.NoneData, self.NoneData],
-            [self.NoneData, self.NoneData, self.NoneData],
-            [self.NoneData, self.NoneData, self.NoneData],
-            [self.NoneData, self.NoneData, self.NoneData],
-        ]
-        self.frontImageList = [[[], [], []], [[], [], []], [[], [], []], [[], [], []]]
-        # self.frontTypeList = [[None, None, None], [None, None, None], [None, None, None]]
-
-        if CodeSetup == "CONE":
-            self.PickleDict = {
-                "PICKLE0": [36, 548],
-                "PICKLE1": [36, 131],
-                "PICKLE2": [484, 131],
-                "PICKLE3": [932, 131],
-                "PICKLE4": [484, 548],
-                "PICKLE5": [932, 548],
-            }
-        else:
-            self.PickleDict = {
-                "PICKLE0": [36, 548],
-                "PICKLE1": [36, 131],
-                "PICKLE2": [484, 131],
-                "PICKLE3": [484, 548],
-                "PICKLE4": [932, 548],
-            }
-        # self.badTypeList = ['TYPE00'] * 20
-        self.nowbadTypeIndex1 = 10
-        self.nowbadTypeIndex2 = 10
-        self.inputngCage = 0
-
-        self.SendingBadType = {
-            0: 0,
-            1: 1,
-            2: 2,
-            3: 3,
-            4: 4,
-            5: 5,
-            6: 7,
-            7: 8,
-            8: 9,
-            9: 10,
-            10: 11,
-            11: 12,
-            12: 14,
-            13: 16,
-            14: 18,
-            15: 19,
-            16: 20,
-            17: 23,
-            18: 26,
-            19: 29,
-            20: 33,
-            21: 39,
-            22: 42,
-        }
-        self.badType = {
-            0: "데이터 부족", 
-            1: "S/F 누락", 
-            2: "롤러 누락", 
-            3: "각인 누락", 
-            4: "식별각인 누락",
-            5: '케이지 깨짐',
-            6: "이종 혼입",
-            7: "소단면 불량", 
-            8: "대단면 불량", 
-            9: "소단 내경 불량", 
-            10: "소단 외경 불량", 
-            11: "대단 외경 불량", 
-            12: "대단 내경 불량", 
-            13: "외경 불량",
-        }
-        self.pickleListData = [None] * (6 if CodeSetup == "CONE" else 5)
-        self.DbupdatePath = [None] * (6 if CodeSetup == "CONE" else 5)
-
-        self.NgContinuityCheck = [[] for _ in range(20)]
-        self.NgContinuityCount = 0
-
-        if CodeSetup == 'CONE':
-            self.UpdateCameraName = {0: "114 CAMERA", 1: "111 CAMERA", 2: "112 CAMERA", 3: "113 CAMERA", 4: "115 CAMERA", 5: "116 CAMERA"}
-        else:
-            self.UpdateCameraName = {0: "104 CAMERA", 1: "101 CAMERA", 2: "102 CAMERA", 3: "103 CAMERA", 4: "105 CAMERA"}
-        
-        self.ProductData = []
-        self.product_infoJson_Load()
-
-    def product_infoJson_Load(self):
-        if os.path.isfile('CheckValue/product_info.json'):
-            with open('CheckValue/product_info.json', 'r') as read_file:
-                ReadJsonData = json.load(read_file)
-            self.ProductData = ReadJsonData[LINE][CodeSetup][1]
-            self.common_model_name = ReadJsonData[LINE][CodeSetup][0]
-            # print(self.ProductData)
-
-    def run(self):
-        sendData1 = "NO"
-        sendData2 = "NO"
-        NoneDataImg_ori = cv2.imread(f"bg/{BgSetup}/NoneData.png")
-        NoneDataImg = []
-        NoneDataImg.append(NoneDataImg_ori)
-        BypassDataImg_ori = cv2.imread(f"bg/{BgSetup}/bypassImage.png")
-        BypassDataImg = []
-        BypassDataImg.append(BypassDataImg_ori)
-        NoneDataBlur = ['CLIENT', 0]
-        while True:
-            try:
-                time.sleep(0.1)
-                if self.AllCompRecv >= ConnectClientCheck:
-                    self.AllCompRecv = 0
-                    # STH.sendMsg('COMP', 'COMP')
-                    # COMP Signal Send
-                    main_frame.update_signal("Model Loading Comp")
-                    print("Model Loading Comp")
-                    main_frame.main_canvas.itemconfig(main_frame.modelloadingView, state="hidden")
-                    main_frame.loadingProcessTrigger = False
-                    # STH.sendPlcSocketData(f'R')
-                    # STH.SendDataTrim("W", "D3003", "1")
-                    STH.ModbusSignalSend(Mode = "READY", Value = 1)
-                    STH.ModbusSignalSend(Mode = "BUSY", Value = 0)
-                    management_frame.management_State_SendAll()
-                    self.modelLoadingCheck = True
-
-                if self.AllDataRecv >= ConnectClientCheck or (STH.DataTrimCheck == True and (time.time() - STH.startTime) > 10):
-                    if (STH.DataTrimCheck == True and (time.time() - STH.startTime) > 10):
-                        logger.info(f'[CHECK] Time Over Datatrim Session - DataTrim')
-                        main_frame.update_signal(f'[CHECK] Time Over Datatrim Session_D')
-                    STH.DataTrimCheck = None
-                    # if STH.trigerCheck == False:
-                    #     main_frame.update_signal('RESULT Signal Not Research / auto datatrim start')
-                    #     logger.info('[Notice] 검사 결과 강제 요청')
-                    # # STH.ModbusSignalCheck[4] = True
-                    # # STH.Modbusclient.write_coils(address = 31088, count = 2, values = [True,False])
-                    # print("결과신호 강제 요청")
-                    # # TSD.sendAllClient('RESULTREQUEST')
-                    # print("[INFO] RESULTREQUEST 송신 : ", time.time() - STH.startTime)
-
-                    # main_frame.update_signal('Light OFF')
-                    # time.sleep(0.5)
-                    # checkSum = LST.check_sum(LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2)
-                    # values = bytearray([58, 58, 0, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, LST.lightValue2, checkSum, 238, 238])
-                    # LST.sendMsg(values)
-
-                    self.AllDataRecv = 0
-                    if STH.ManualMode == True:
-                        print("메뉴얼모드 진행중")
-                        print("결과 데이터 수신 완료")
-                        print("결과 데이터 front > Comp 업데이트")
-
-                        # for i in range(5 if CodeSetup == 'CUP' else 6):
-                        #     try:
-                        #         if self.CompBlurDataList[i][1] > self.CameraBlurLimit[self.CompBlurDataList[i][0]][1]:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session OK - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session OK - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'hidden')
-                        #             pass
-                        #         elif self.CameraBlurLimit[self.CompBlurDataList[i][0]][0] < self.CompBlurDataList[i][1] <= self.CameraBlurLimit[self.CompBlurDataList[i][0]][1]:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session Check - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session Check - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'normal')
-                        #             pass
-                        #         elif self.CameraBlurLimit[self.CompBlurDataList[i][0]][0] >= self.CompBlurDataList[i][1]:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session Trouble - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session Trouble - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'normal')
-                        #             pass
-                        #         else:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session Index Error - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session Index Error - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'hidden')
-                        #             self.CompResultList[i] = self.forceClientNgData[self.CompBlurDataList[i][0]]
-                        #     except:
-                        #         print(f'CLIENT{i} Blur Data Session Error')
-                        #         logger.info(f'CLIENT{i} Blur Data Session Error')
-
-                        # print(self.CompResultList)
-                        
-                        if CodeSetup == "CONE":
-                            if self.CompResultList[1] == self.OKdata and self.CompResultList[2] == self.OKdata and self.CompResultList[3] == self.OKdata:
-                                sendData1 = "OK"
-                            elif self.CompResultList[1] == self.NoneData or self.CompResultList[2] == self.NoneData or self.CompResultList[3] == self.NoneData:
-                                sendData1 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.CompResultList[1][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client1\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[2][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client2\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[3][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client3\n\n\n')
-                                        omissionCheck = True
-
-                                
-                                if omissionCheck == False:
-                                    sendData1 = "NG"
-                                else:
-                                    sendData1 = "NG_Omisson"
-
-                            if self.CompResultList[0] == self.OKdata and self.CompResultList[4] == self.OKdata and self.CompResultList[5] == self.OKdata:
-                                sendData2 = "OK"
-                            elif self.CompResultList[0] == self.NoneData or self.CompResultList[4] == self.NoneData or self.CompResultList[5] == self.NoneData:
-                                sendData2 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.CompResultList[0][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client0\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[4][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client4\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[5][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client5\n\n\n')
-                                        omissionCheck = True
-
-                                
-                                if omissionCheck == False:
-                                    sendData2 = "NG"
-                                else:
-                                    sendData2 = "NG_Omisson"
-                        else:
-                            if self.CompResultList[1] == self.OKdata and self.CompResultList[2] == self.OKdata:
-                                sendData1 = "OK"
-                            elif self.CompResultList[1] == self.NoneData or self.CompResultList[2] == self.NoneData:
-                                sendData1 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.CompResultList[1][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client1\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[2][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client2\n\n\n')
-                                        omissionCheck = True
-
-                                
-                                if omissionCheck == False:
-                                    sendData1 = "NG"
-                                else:
-                                    sendData1 = "NG_Omisson"
-                            if self.CompResultList[0] == self.OKdata and self.CompResultList[3] == self.OKdata and self.CompResultList[4] == self.OKdata:
-                                sendData2 = "OK"
-                            elif self.CompResultList[0] == self.NoneData or self.CompResultList[3] == self.NoneData or self.CompResultList[4] == self.NoneData:
-                                sendData2 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.CompResultList[0][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client0\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[3][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client3\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[4][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client4\n\n\n')
-                                        omissionCheck = True
-                                
-                                if omissionCheck == False:
-                                    sendData2 = "NG"
-                                else:
-                                    sendData2 = "NG_Omisson"
-
-                        if STH.StartMode[0] == "1":
-                            print("Station 3 - Product On")
-                        else:
-                            print("Station 3 - Product Off")
-                            sendData1 = "NO"
-
-                        if STH.StartMode[1] == "1":
-                            print("Station 6 - Product On")
-                        else:
-                            print("Station 6 - Product Off")
-                            sendData2 = "NO"
-
-                        print(self.CompResultList)
-                        print("sendData1 : ", sendData1, "sendData2 : ", sendData2)
-
-                        if main_frame.bypass_mode == True:
-                            if sendData1 != "NO":
-                                sendData1 = "OK"
-                            if sendData2 != "NO":
-                                sendData2 = "OK"
-
-                        if main_frame.test_mode == False:
-                            if sendData1 != "NO":
-                                sendData1 = "NG_Omisson"
-                            if sendData2 != "NO":
-                                sendData2 = "NG_Omisson"
-                        if main_frame.test_mode == True:
-                            if sendData1 != "NO":
-                                sendData1 = "NG"
-                            if sendData2 != "NO":
-                                sendData2 = "NG"
-                            
-                        if sendData1 == "OK":
-                            # STH.SendDataTrim("W", "D3006", "3")
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 3)
-                            logger.info("[Notice] Result Send - Station3 > OK")
-                            print("[Notice] Result Send - Station3 > OK")
-                        elif sendData1 == "NG":
-                            # STH.SendDataTrim("W", "D3006", "2")  # ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 2)
-                            logger.info("[Notice] Result Send - Station3 > NG")
-                            print("[Notice] Result Send - Station3 > NG")
-                        elif sendData1 == 'NG_Omisson':
-                            # STH.SendDataTrim("W", "D3006", "1")  # ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 1)
-                            logger.info('[Notice] Result Send - Station3 > Omission NG')
-                            print('[Notice] Result Send - Station3 > Omission NG')
-                        else:
-                            # STH.SendDataTrim("W", "D3006", "4")
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 4)
-                            logger.info("[Notice] Result Send - Station3 > None")
-
-                        # time.sleep(0.5)
-
-                        if sendData2 == "OK":
-                            # STH.SendDataTrim("W", "D3007", "3")
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 3)
-                            logger.info("[Notice] Result Send - Station6 > OK")
-                            print("[Notice] Result Send - Station6 > OK")
-                        elif sendData2 == "NG":
-                            # STH.SendDataTrim('W','D3007','2') #ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 2)
-                            logger.info("[Notice] Result Send - Station6 > OK")
-                            print("[Notice] Result Send - Station6 > OK")
-                        elif sendData2 == 'NG_Omisson':
-                            # STH.SendDataTrim("W", "D3007", "1")  # ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 1)
-                            logger.info('[Notice] Result Send - Station6 > Omission NG')
-                            print('[Notice] Result Send - Station6 > Omission NG')
-                        else:
-                            # STH.SendDataTrim("W", "D3007", "4")
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 4)
-                            logger.info("[Notice] Result Send - Station6 > None")
-                            print("[Notice] Result Send - Station6 > None")
-                        STH.ModbusSignalSend(Mode = "RESULTSESSION", Value = 2)
-                        main_frame.update_signal(f"RESULT send {sendData1}{sendData2}")
-                    else:
-                        # print("[INFO] Result 결과 송신 데이터 종합 시작 : ", time.time() - STH.startTime)
-
-                        print("결과 데이터 수신 완료")
-                        print("결과 데이터 front > Comp 업데이트")
-                        for i in range(len(management_frame.ManagementBtnIndex[3])):
-                            if management_frame.BtnState[3][i][0] == True:
-                                if CodeSetup == 'CONE':
-                                    if i == 0:
-                                        #101 or 111 bypass
-                                        DTT.frontDataList[0][0] = self.OKdata
-                                        # DTT.frontBlurDataList[0][0] = ['CLIENT1', 100000]
-                                        DTT.frontImageList[0][0] = BypassDataImg.copy()
-                                        pass
-                                    elif i == 1:
-                                        #102 or 112 bypass
-                                        DTT.frontDataList[0][1] = self.OKdata
-                                        # DTT.frontBlurDataList[0][1] = ['CLIENT2', 100000]
-                                        DTT.frontImageList[0][1] = BypassDataImg.copy()
-                                        pass
-                                    elif i == 2:
-                                        #103 or 113 
-                                        DTT.frontDataList[0][2] = self.OKdata
-                                        # DTT.frontBlurDataList[0][2] = ['CLIENT3', 100000]
-                                        DTT.frontImageList[0][2] = BypassDataImg.copy()
-                                        pass
-                                    elif i == 3:
-                                        #104 or 114 bypass
-                                        self.CompResultList[0] = self.OKdata 
-                                        # self.CompBlurDataList[0] = ['CLIENT0', 100000]
-                                        self.CompImageList[0] = BypassDataImg.copy()
-                                        pass
-                                    elif i == 4:
-                                        #105 or 115 bypass
-                                        self.CompResultList[4] = self.OKdata 
-                                        # self.CompBlurDataList[4] = ['CLIENT0', 100000]
-                                        self.CompImageList[4] = BypassDataImg.copy()
-                                        pass
-                                    elif i == 5:
-                                        #106 or 115 bypass
-                                        self.CompResultList[5] = self.OKdata 
-                                        # self.CompBlurDataList[5] = ['CLIENT0', 100000]
-                                        self.CompImageList[5] = BypassDataImg.copy()
-                                        pass
-                                else:
-                                    if i == 0:
-                                        #101 or 111 bypass
-                                        DTT.frontDataList[0][0] = self.OKdata
-                                        DTT.frontBlurDataList[0][0] = ['CLIENT1', 100000]
-                                        DTT.frontImageList[0][0] = BypassDataImg.copy()
-                                        print('CLIENT1 bypass data update')
-                                        pass
-                                    elif i == 1:
-                                        #102 or 112 bypass
-                                        DTT.frontDataList[0][1] = self.OKdata
-                                        DTT.frontBlurDataList[0][1] = ['CLIENT2', 100000]
-                                        DTT.frontImageList[0][1] = BypassDataImg.copy()
-                                        print('CLIENT2 bypass data update')
-                                        pass
-                                    elif i == 2:
-                                        #103 or 113 bypass
-                                        self.CompResultList[3] = self.OKdata
-                                        # self.CompBlurDataList[3] = ['CLIENT3', 100000]
-                                        self.CompImageList[3] = BypassDataImg.copy()
-                                        print('CLIENT3 bypass data update')
-                                        pass
-                                    elif i == 3:
-                                        #104 or 114 bypass
-                                        self.CompResultList[0] = self.OKdata 
-                                        # self.CompBlurDataList[0] = ['CLIENT0', 100000]
-                                        self.CompImageList[0] = BypassDataImg.copy()
-                                        print('CLIENT0 bypass data update')
-                                        pass
-                                    elif i == 4:
-                                        #105 or 115 bypass
-                                        self.CompResultList[4] = self.OKdata
-                                        # self.CompBlurDataList[4] = ['CLIENT4', 100000]
-                                        self.CompImageList[4] = BypassDataImg.copy()
-                                        print('CLIENT4 bypass data update')
-                                        pass
-                                pass
-                        for i in range(3 if CodeSetup == "CONE" else 2):
-                            try:
-                                self.CompResultList[i + 1] = self.frontDataList[3][i]
-                                # self.CompBlurDataList[i + 1] = self.frontBlurDataList[3][i]
-                            except Exception as ex:
-                                self.CompResultList[i + 1] = self.NoneData
-                                # self.CompBlurDataList[i + 1] = NoneDataBlur
-                                logger.info(f"Warning : 해당 문제로 인하여 에러가 발생 - {ex} \n {traceback.format_exc()}")
-                                print(ex)
-                        # for i in range(5 if CodeSetup == 'CUP' else 6):
-                        #     try:
-                        #         if self.CompBlurDataList[i][1] > self.CameraBlurLimit[self.CompBlurDataList[i][0]][1]:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session OK - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session OK - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'hidden')
-                        #             pass
-                        #         elif self.CameraBlurLimit[self.CompBlurDataList[i][0]][0] < self.CompBlurDataList[i][1] <= self.CameraBlurLimit[self.CompBlurDataList[i][0]][1]:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session Check - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session Check - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'normal')
-                        #             pass
-                        #         elif self.CameraBlurLimit[self.CompBlurDataList[i][0]][0] >= self.CompBlurDataList[i][1]:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session Trouble - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session Trouble - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'normal')
-                        #             pass
-                        #         else:
-                        #             print(f'{self.CompBlurDataList[i][0]} Blur Data Session Index Error - {self.CompBlurDataList[i][1]}')
-                        #             logger.info(f'{self.CompBlurDataList[i][0]} Blur Data Session Index Error - {self.CompBlurDataList[i][1]}')
-                        #             main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'hidden')
-                        #             self.CompResultList[i] = self.forceClientNgData[self.CompBlurDataList[i][0]]
-                        #     except:
-                        #         print(f'CLIENT{i} Blur Data Session Error')
-                        #         logger.info(f'CLIENT{i} Blur Data Session Error')
-
-                        print("데이터 화면 업데이트")
-                        if CodeSetup == "CONE":
-                            if self.frontDataList[0][0] == self.OKdata and self.frontDataList[0][1] == self.OKdata and self.frontDataList[0][2] == self.OKdata:
-                                sendData1 = "OK"
-                            elif self.frontDataList[0][0] == self.NoneData or self.frontDataList[0][1] == self.NoneData or self.frontDataList[0][2] == self.NoneData:
-                                sendData1 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.frontDataList[0][0][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client1\n\n\n')
-                                        omissionCheck = True
-                                    if self.frontDataList[0][1][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client2\n\n\n')
-                                        omissionCheck = True
-                                    if self.frontDataList[0][2][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client3\n\n\n')
-                                        omissionCheck = True
-
-                                
-                                if omissionCheck == False:
-                                    sendData1 = "NG"
-                                else:
-                                    sendData1 = "NG_Omisson"
-                            if self.CompResultList[0] == self.OKdata and self.CompResultList[4] == self.OKdata and self.CompResultList[5] == self.OKdata:
-                                sendData2 = "OK"
-                            elif self.CompResultList[0] == self.NoneData or self.CompResultList[4] == self.NoneData or self.CompResultList[5] == self.NoneData:
-                                sendData2 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.CompResultList[0][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client0\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[4][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client4\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[5][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client5\n\n\n')
-                                        omissionCheck = True
-
-                                if omissionCheck == False:
-                                    sendData2 = "NG"
-                                else:
-                                    sendData2 = "NG_Omisson"
-                        else:
-                            if self.frontDataList[0][0] == self.OKdata and self.frontDataList[0][1] == self.OKdata:
-                                sendData1 = "OK"
-                            elif self.frontDataList[0][0] == self.NoneData or self.frontDataList[0][1] == self.NoneData:
-                                sendData1 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.frontDataList[0][0][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client1\n\n\n')
-                                        omissionCheck = True
-                                    if self.frontDataList[0][1][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client2\n\n\n')
-                                        omissionCheck = True
-
-                                
-                                if omissionCheck == False:
-                                    sendData1 = "NG"
-                                else:
-                                    sendData1 = "NG_Omisson"
-                            if self.CompResultList[0] == self.OKdata and self.CompResultList[3] == self.OKdata and self.CompResultList[4] == self.OKdata:
-                                sendData2 = "OK"
-                            elif self.CompResultList[0] == self.NoneData or self.CompResultList[3] == self.NoneData or self.CompResultList[4] == self.NoneData:
-                                sendData2 = "NO"
-                            else:
-                                omissionCheck = False
-                                for i in range(len(DTT.NgCage1Setup)):
-                                    if self.CompResultList[0][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client0\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[3][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client3\n\n\n')
-                                        omissionCheck = True
-                                    if self.CompResultList[4][i+1] == '1':
-                                        print('\n\n\n[Notice] Omission Data Check - Client4\n\n\n')
-                                        omissionCheck = True
-
-                                
-                                if omissionCheck == False:
-                                    sendData2 = "NG"
-                                else:
-                                    sendData2 = "NG_Omisson"
-
-                        if STH.StartMode[0] == "1":
-                            print("Station 3 - Product On")
-                        else:
-                            print("Station 3 - Product Off")
-                            sendData1 = "NO"
-
-                        if STH.StartMode[1] == "1":
-                            print("Station 6 - Product On")
-                        else:
-                            print("Station 6 - Product Off")
-                            sendData2 = "NO"
-
-                        # print(self.CompResultList)
-                        print("sendData1 : ", sendData1, "sendData2 : ", sendData2)
-                        # print("[INFO] 스타트 모드에 따른 sendData 초기화 : ", time.time() - STH.startTime)
-
-                        if main_frame.bypass_mode == True:
-                            if sendData1 != "NO":
-                                sendData1 = "OK"
-                            if sendData2 != "NO":
-                                sendData2 = "OK"
-
-                        if main_frame.test_mode == False:
-                            if sendData1 != "NO":
-                                sendData1 = "NG_Omisson"
-                            if sendData2 != "NO":
-                                sendData2 = "NG_Omisson"
-                        if main_frame.test_mode == True:
-                            if sendData1 != "NO":
-                                sendData1 = "NG"
-                            if sendData2 != "NO":
-                                sendData2 = "NG"
-
-                        if sendData1 == "OK":
-                            # STH.SendDataTrim("W", "D3006", "3")
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 3)
-                            logger.info("[Notice] Result Send - Station3 > OK")
-                            print("[Notice] Result Send - Station3 > OK")
-                        elif sendData1 == "NG":
-                            # STH.SendDataTrim("W", "D3006", "2")  # ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 2)
-                            logger.info(f"[Notice] Result Send - Station3 > NG")
-                            print(f"[Notice] Result Send - Station3 > NG")
-                        elif sendData1 == "NG_Omisson":
-                            # STH.SendDataTrim("W", "D3006", "1")  # ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 1)
-                            logger.info(f"[Notice] Result Send - Station3 > NG_Omisson")
-                            print(f"[Notice] Result Send - Station3 > NG_Omisson")
-                        else:
-                            # STH.SendDataTrim("W", "D3006", "4")
-                            STH.ModbusSignalSend(Mode = "RESULT1", Value = 4)
-                            logger.info("[Notice] Result Send - Station3 > None")
-                            print("[Notice] Result Send - Station3 > None")
-
-                        # time.sleep(0.5)
-
-                        if sendData2 == "OK":
-                            # STH.SendDataTrim("W", "D3007", "3")
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 3)
-                            logger.info("[Notice] Result Send - Station6 > OK")
-                            print("[Notice] Result Send - Station6 > OK")
-                        elif sendData2 == "NG":
-                            # STH.SendDataTrim("W", "D3007", "2")  # ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 2)
-                            logger.info(f"[Notice] Result Send - Station6 > NG")
-                            print(f"[Notice] Result Send - Station6 > NG")
-                        elif sendData2 == "NG_Omisson":
-                            # STH.SendDataTrim("W", "D3007", "1")  # ORIGIN
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 1)
-                            logger.info(f"[Notice] Result Send - Station6 > NG_Omisson")
-                            print(f"[Notice] Result Send - Station6 > NG_Omisson")
-                        else:
-                            # STH.SendDataTrim("W", "D3007", "4")
-                            STH.ModbusSignalSend(Mode = "RESULT2", Value = 4)
-                            logger.info("[Notice] Result Send - Station6 > None")
-                            print("[Notice] Result Send - Station6 > None")
-                        main_frame.update_signal(f"RESULT send {sendData1}{sendData2}")
-                        logger.info(f"RESULT send {sendData1}{sendData2}")
-                        STH.ModbusSignalSend(Mode = "RESULTSESSION", Value = 2)
-
-                        ########################################################################################### 1211 추가 (화면에 보여질 불량 갯수체크 데이터 종합)
-                        for i in range(len(self.CompResultList)):
-                            try:
-                                for x in range(len(DTT.badType.keys())):
-                                    try:
-                                        if self.CompResultList[i][x] == "1":
-                                            main_frame.mainbadCheckList[i][x] += 1
-                                    except:
-                                        # print('except break')
-                                        break
-                            except:
-                                # print('Data Check Error', traceback.format_exc())
-                                pass
-                        print(f'[Check] mainbadCheckList - {main_frame.mainbadCheckList}')
-
-                if self.AllImageRecv >= ConnectClientCheck or (STH.DataTrimCheck == None and (time.time() - STH.startTime) > 10):
-                    if (STH.DataTrimCheck == None and (time.time() - STH.startTime) > 10):
-                        logger.info(f'[CHECK] Time Over Datatrim Session - ImageTrim')
-                        main_frame.update_signal(f'[CHECK] Time Over Datatrim Session_I')
-                    STH.DataTrimCheck = False
-                    ngCheckList = []
-                    if STH.ManualMode == True:
-                        print("menual Mode Image Data Check Start")
-                        print("[INFO] Result 이미지 송신 데이터 종합 시작 : ", time.time() - STH.startTime)
-                        self.AllImageRecv = 0
-
-                        print("이미지 데이터 수신 완료")
-
-                        self.DbupdatePath = [None] * (6 if CodeSetup == "CONE" else 5)
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            UpdateCheck = False
-                            for x in range(len(self.CompImageList[i])):
-                                self.imgSaveCount += 1
-                                year_s = datetime.datetime.today().year
-                                month_s = datetime.datetime.today().month
-                                day_s = datetime.datetime.today().day
-                                path = f"ResultData/{str(year_s)}/{str(month_s)}/{str(day_s)}/{i}"
-                                inputNum = "%05d" % self.imgSaveCount
-
-                                try:
-                                    self.CompImageList[i][x] = cv2.resize(self.CompImageList[i][x], dsize=(391, 290))
-                                except:
-                                    self.CompImageList[i][x] = NoneDataImg_ori.copy()
-                                    print(traceback.format_exc())
-
-                                # 수동모드 사진 저장 안함
-                                # MQ.put((path, 'SaveImg_{}.jpg'.format(inputNum), self.CompImageList[i][x]))
-
-                                if x == 0:
-                                    main_frame.show_img(self.CompImageList[i][x], i)
-                                    UpdateCheck = True
-                                else:
-                                    print(traceback.format_exc())
-                            if UpdateCheck == False:
-                                main_frame.show_img(NoneDataImg_ori, i)
-                            else:
-                                pass
-
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            if self.CompResultList[i] == self.OKdata:
-                                main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="normal")
-                                main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="hidden")
-                            elif self.CompResultList[i] == self.NoneData or self.CompResultList[i] == None:
-                                main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="hidden")
-                                main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="hidden")
-                            elif "1" in self.CompResultList[i]:
-                                main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="hidden")
-                                main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="normal")
-
-                        print("[INFO] 수동모드 데이터베이스 저장 안함 : ", time.time() - STH.startTime)
-                    else:
-                        print("[INFO] Result 이미지 송신 데이터 종합 시작 : ", time.time() - STH.startTime)
-                        STH.ngContinuousCount += 1
-                        self.AllImageRecv = 0
-                        print("이미지 데이터 front > Comp 업데이트")
-                        for i in range(3 if CodeSetup == "CONE" else 2):
-                            try:
-                                if self.frontImageList[3][i]:
-                                    self.CompImageList[i + 1] = self.frontImageList[3][i].copy()
-                                else:
-                                    self.CompImageList[i + 1] = NoneDataImg.copy()
-                            except Exception as ex:
-                                logger.info(f"Warning : 해당 문제로 인하여 에러가 발생 - {ex} \n {traceback.format_exc()}")
-                                self.CompImageList[i + 1] = NoneDataImg.copy()
-
-                        self.DbupdatePath = [None] * (6 if CodeSetup == "CONE" else 5)
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            UpdateCheck = False
-                            for x in range(len(self.CompImageList[i])):
-                                self.imgSaveCount += 1
-                                year_s = datetime.datetime.today().year
-                                month_s = datetime.datetime.today().month
-                                day_s = datetime.datetime.today().day
-                                path = f"ResultData/{str(year_s)}/{str(month_s)}/{str(day_s)}/{i}"
-                                inputNum = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-
-                                try:
-                                    self.CompImageList[i][x] = cv2.resize(self.CompImageList[i][x], dsize=(391, 290))
-                                except:
-                                    self.CompImageList[i].append(cv2.imread(f"bg/{BgSetup}/NoneData.png"))
-                                if CodeSetup == 'CUP':
-                                    # if "1" in self.CompResultList[0] or "1" in self.CompResultList[1] or "1" in self.CompResultList[2] or "1" in self.CompResultList[3] or "1" in self.CompResultList[4]:
-                                    MQ.put((path, "SaveImg_{}.jpg".format(inputNum), self.CompImageList[i][x],))
-                                else:
-                                    # if "1" in self.CompResultList[0] or "1" in self.CompResultList[1] or "1" in self.CompResultList[2] or "1" in self.CompResultList[3] or "1" in self.CompResultList[4] or "1" in self.CompResultList[5]:
-                                    MQ.put((path, "SaveImg_{}.jpg".format(inputNum), self.CompImageList[i][x],))
-
-                                if x == 0:
-                                    self.DbupdatePath[i] = path + f"/SaveImg_{inputNum}.jpg"
-                                    main_frame.show_img(self.CompImageList[i][x], i)
-                                    UpdateCheck = True
-                                else:
-                                    self.DbupdatePath[i] = self.DbupdatePath[i] + "||" + path + f"/SaveImg_{inputNum}.jpg"
-                            if UpdateCheck == False:
-                                main_frame.show_img(NoneDataImg_ori, i)
-                            else:
-                                pass
-                                # print(self.DbupdatePath)
-
-                        if CodeSetup == "CONE":
-                            if self.CompResultList[0] == self.NoneData or self.CompResultList[1] == self.NoneData or self.CompResultList[2] == self.NoneData or self.CompResultList[3] == self.NoneData or self.CompResultList[4] == self.NoneData or self.CompResultList[0] == None or self.CompResultList[1] == None or self.CompResultList[2] == None or self.CompResultList[3] == None or self.CompResultList[4] == None or self.CompResultList[5] == self.NoneData or self.CompResultList[5] == None:
-                                logger.info(f"[Notice] : None Data Check {self.CompResultList}")
-                                pass
-                            elif self.CompResultList[0] == self.OKdata and self.CompResultList[1] == self.OKdata and self.CompResultList[2] == self.OKdata and self.CompResultList[3] == self.OKdata and self.CompResultList[4] == self.OKdata and self.CompResultList[5] == self.OKdata:
-                                main_frame.ok_count += 1
-                                main_frame.total_count += 1
-                                main_frame.main_canvas.itemconfig(main_frame.okText, text=main_frame.ok_count)
-                                main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-                                logger.info(f"[Notice] : Ok Data Check {self.CompResultList}")
-                            elif "1" in self.CompResultList[0] or "1" in self.CompResultList[1] or "1" in self.CompResultList[2] or "1" in self.CompResultList[3] or "1" in self.CompResultList[4] or "1" in self.CompResultList[5]:
-                                # check
-                                main_frame.ng_count += 1
-                                main_frame.total_count += 1
-                                main_frame.main_canvas.itemconfig(main_frame.ngText, text=main_frame.ng_count)
-                                main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-
-                                logger.info(f"[Notice] : Ng Data Check {self.CompResultList}")
-
-                                if "1" in self.CompResultList[0]:
-                                    STH.ngContinuousList[0] += 1
-                                if "1" in self.CompResultList[1]:
-                                    STH.ngContinuousList[1] += 1
-                                if "1" in self.CompResultList[2]:
-                                    STH.ngContinuousList[2] += 1
-                                if "1" in self.CompResultList[3]:
-                                    STH.ngContinuousList[3] += 1
-                                if "1" in self.CompResultList[4]:
-                                    STH.ngContinuousList[4] += 1
-                                if "1" in self.CompResultList[5]:
-                                    STH.ngContinuousList[5] += 1
-
-                        else:
-                            if self.CompResultList[0] == self.NoneData or self.CompResultList[1] == self.NoneData or self.CompResultList[2] == self.NoneData or self.CompResultList[3] == self.NoneData or self.CompResultList[4] == self.NoneData or self.CompResultList[0] == None or self.CompResultList[1] == None or self.CompResultList[2] == None or self.CompResultList[3] == None or self.CompResultList[4] == None:  # or self.CompResultList[5] == self.NoneData  or self.CompResultList[5] == None
-                                logger.info(f"[Notice] : None Data Check {self.CompResultList}")
-                                pass
-                            elif self.CompResultList[0] == self.OKdata and self.CompResultList[1] == self.OKdata and self.CompResultList[2] == self.OKdata and self.CompResultList[3] == self.OKdata and self.CompResultList[4] == self.OKdata:  # and self.CompResultList[5] == self.OKdata:
-                                main_frame.ok_count += 1
-                                main_frame.total_count += 1
-                                main_frame.main_canvas.itemconfig(main_frame.okText, text=main_frame.ok_count)
-                                main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-                                logger.info(f"[Notice] : Ok Data Check {self.CompResultList}")
-                            elif "1" in self.CompResultList[0] or "1" in self.CompResultList[1] or "1" in self.CompResultList[2] or "1" in self.CompResultList[3] or "1" in self.CompResultList[4]:  # or '1' in self.CompResultList[5]:
-                                # check
-                                main_frame.ng_count += 1
-                                main_frame.total_count += 1
-                                main_frame.main_canvas.itemconfig(main_frame.ngText, text=main_frame.ng_count)
-                                main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-
-                                logger.info(f"[Notice] : Ng Data Check {self.CompResultList}")
-
-                                if "1" in self.CompResultList[0]:
-                                    STH.ngContinuousList[0] += 1
-                                if "1" in self.CompResultList[1]:
-                                    STH.ngContinuousList[1] += 1
-                                if "1" in self.CompResultList[2]:
-                                    STH.ngContinuousList[2] += 1
-                                if "1" in self.CompResultList[3]:
-                                    STH.ngContinuousList[3] += 1
-                                if "1" in self.CompResultList[4]:
-                                    STH.ngContinuousList[4] += 1
-
-                        # OH 85% 디스크 차면 팝업창 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-                        drive = 'c:'
-                        c = dict([x for x in zip(['total','used','free'], shutil.disk_usage(drive))])
-                        result = c['used']/c['total']*100
-
-                        if result > 85 :
-                            print("[INFO] 디스크 85% 용량 초과")
-                            logger.info(f"[INFO] disk error")
-                            main_frame.main_canvas.itemconfig(main_frame.show_pop, image = main_frame.disk_error_pop, state="normal")
-                        else : 
-                            main_frame.main_canvas.itemconfig(main_frame.show_pop, image = '', state="hidden")
-                        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            if self.CompResultList[i] == self.OKdata:
-                                main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="normal")
-                                main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="hidden")
-                            elif self.CompResultList[i] == self.NoneData or self.CompResultList[i] == None:
-                                main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="hidden")
-                                main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="hidden")
-                            elif "1" in self.CompResultList[i]:
-                                main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="hidden")
-                                main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="normal")
-                        # (H, W) = self.CompImageList[0][0].shape[:2]
-                        # print(W, H)
-
-                        print("[INFO] 데이터 종합 저장 및 갯수 카운트 : ", time.time() - STH.startTime)
-
-                        if (self.CompResultList[0] == self.OKdata and self.CompResultList[1] == self.OKdata and self.CompResultList[2] == self.OKdata and self.CompResultList[3] == self.OKdata and self.CompResultList[4] == self.OKdata and self.CompResultList[5] == self.OKdata) if CodeSetup == "CONE" else (self.CompResultList[0] == self.OKdata and self.CompResultList[1] == self.OKdata and self.CompResultList[2] == self.OKdata and self.CompResultList[3] == self.OKdata and self.CompResultList[4] == self.OKdata):
-                            bearingartDB.dbCount_Process(STH.nowModel, 'OK')
-                            print(self.CompResultList)
-                        else:
-                            print('CompTypeList ori: ', self.CompResultList)
-                            ngCheckList = []
-                            updateMsg = ""
-                            checkCount = 0
-                            for i in range(6 if CodeSetup == "CONE" else 5):
-                                for x in range(0, len(DTT.badType.keys())):
-                                    if x in ngCheckList:
-                                        print("데이터 이미 업데이트 완료")
-                                    else:
-                                        try:
-                                            if self.CompResultList[i][x] == "1":
-                                                ngCheckList.append(x)
-                                                print("ng데이터 추가완료")
-                                        except:
-                                            pass
-                            ngCheckList.sort()
-                            for i in range(len(DTT.badType.keys())):
-                                if i in ngCheckList:
-                                    print("ngList : ", ngCheckList)
-                                    print("setting : ", DTT.NgCage1Setup)
-                                    if updateMsg == "":
-                                        updateMsg = updateMsg + self.badType[i]
-                                    else:
-                                        checkCount += 1
-                                    if i in DTT.NgCage1Setup:
-                                        print("NG케이지 1에 업데이트해야함", i)
-
-                            if checkCount == 0:
-                                ngcageText = updateMsg
-                            else:
-                                ngcageText = updateMsg + f" 외 {checkCount}건"
-                            print("최종 메시지 : ", ngcageText)
-
-                            if "데이터 부족" in ngcageText:
-                                # bearingartDB.dbCount_Process(STH.nowModel, 'NG')      #데이터 없음시에도 db 카운터 늘리려면 주석 풀기 / 아니면 주석상태로 방치
-                                pass
-                            else:
-                                for i in range(len(DTT.badType.keys())):
-                                    if i in ngCheckList:
-                                        # if DTT.ngCageSetting[i] == True:
-                                        if i in DTT.NgCage1Setup:
-                                            self.inputngCage = 1
-                                            print("ngCage1 update check")
-                                            break
-                                        else:
-                                            self.inputngCage = 2
-                                            print("ngCage2 update check")
-                                    else:
-                                        self.inputngCage = 2
-                                        print("ngCage2 update check")
-
-                                # print(self.CompResultList)
-                                # print(ngCheckList)
-                                if self.inputngCage == 1:
-                                    bearingartDB.dbCount_Process(STH.nowModel, 'CRI')
-                                    print("ngcage1 update")
-
-                                    if self.nowbadTypeIndex1 == 0:
-                                        for i in reversed(range(9)):
-                                            ngcage_frame.ngCageUpdate1[i + 1] = ngcage_frame.ngCageUpdate1[i].copy()
-                                            main_frame.bad_text1_inputData[i + 1] = main_frame.bad_text1_inputData[i]
-                                            main_frame.main_canvas.itemconfig(
-                                                main_frame.bad_text1[i + 1], text=main_frame.bad_text1_inputData[i + 1],
-                                            )
-                                            if i == 0:
-                                                ngcage_frame.ngCageUpdate1[0] = [
-                                                    False,
-                                                    [None, None, None, None, None],
-                                                    [None, None, None, None, None],
-                                                    [None],
-                                                ]
-                                                main_frame.bad_text1_inputData[0] = None
-
-                                    self.nowbadTypeIndex1 -= 1
-                                    if self.nowbadTypeIndex1 == -1:
-                                        self.nowbadTypeIndex1 = 0
-
-                                    main_frame.main_canvas.itemconfig(
-                                        main_frame.bad_image1[self.nowbadTypeIndex1], image=main_frame.main_frame_bad,
-                                    )
-                                    main_frame.bad_text1_inputData[self.nowbadTypeIndex1] = ngcageText
-                                    main_frame.main_canvas.itemconfig(
-                                        main_frame.bad_text1[self.nowbadTypeIndex1], text=main_frame.bad_text1_inputData[self.nowbadTypeIndex1],
-                                    )
-
-                                    ngcage_frame.ngCageUpdate1[self.nowbadTypeIndex1][0] = True
-                                    ngcage_frame.ngCageUpdate1[self.nowbadTypeIndex1][1] = copy.deepcopy(self.CompResultList)
-                                    ngcage_frame.ngCageUpdate1[self.nowbadTypeIndex1][2] = copy.deepcopy(self.CompImageList)
-                                    ngcage_frame.ngCageUpdate1[self.nowbadTypeIndex1][3] = copy.deepcopy(ngCheckList)
-
-                                elif self.inputngCage == 2:
-                                    print("ngcage2 update")
-                                    bearingartDB.dbCount_Process(STH.nowModel, 'NG')
-
-                                    if self.nowbadTypeIndex2 == 0:
-                                        for i in reversed(range(9)):
-                                            ngcage_frame.ngCageUpdate2[i + 1] = ngcage_frame.ngCageUpdate2[i].copy()
-                                            main_frame.bad_text2_inputData[i + 1] = main_frame.bad_text2_inputData[i]
-                                            main_frame.main_canvas.itemconfig(
-                                                main_frame.bad_text2[i + 1], text=main_frame.bad_text2_inputData[i + 1],
-                                            )
-                                            if i == 0:
-                                                ngcage_frame.ngCageUpdate2[0] = [
-                                                    False,
-                                                    [None, None, None, None, None],
-                                                    [None, None, None, None, None],
-                                                    [None],
-                                                ]
-                                                main_frame.bad_text2_inputData[0] = None
-
-                                    self.nowbadTypeIndex2 -= 1
-                                    if self.nowbadTypeIndex2 == -1:
-                                        self.nowbadTypeIndex2 = 0
-
-                                    main_frame.main_canvas.itemconfig(
-                                        main_frame.bad_image2[self.nowbadTypeIndex2], image=main_frame.main_frame_bad,
-                                    )
-                                    main_frame.bad_text2_inputData[self.nowbadTypeIndex2] = ngcageText
-                                    main_frame.main_canvas.itemconfig(
-                                        main_frame.bad_text2[self.nowbadTypeIndex2], text=main_frame.bad_text2_inputData[self.nowbadTypeIndex2],
-                                    )
-
-                                    ngcage_frame.ngCageUpdate2[self.nowbadTypeIndex2][0] = True
-                                    ngcage_frame.ngCageUpdate2[self.nowbadTypeIndex2][1] = copy.deepcopy(self.CompResultList)
-                                    ngcage_frame.ngCageUpdate2[self.nowbadTypeIndex2][2] = copy.deepcopy(self.CompImageList)
-                                    ngcage_frame.ngCageUpdate2[self.nowbadTypeIndex2][3] = copy.deepcopy(ngCheckList)
-
-                                    
-
-                        print("[INFO] NG cage update : ", time.time() - STH.startTime)
-
-                        # DATABASE UPDATE
-                        if CodeSetup == "CONE":
-                            # if "1" in self.CompResultList[0] or "1" in self.CompResultList[1] or "1" in self.CompResultList[2] or "1" in self.CompResultList[3] or "1" in self.CompResultList[4] or "1" in self.CompResultList[5]:
-                            inputDBData = {
-                                ("ModelName", f"'{STH.nowModel}'"),
-                                ("Result1", f"'{self.CompResultList[0]}'"),
-                                ("Result2", f"'{self.CompResultList[1]}'"),
-                                ("Result3", f"'{self.CompResultList[2]}'"),
-                                ("Result4", f"'{self.CompResultList[3]}'"),
-                                ("Result5", f"'{self.CompResultList[4]}'"),
-                                ("Result6", f"'{self.CompResultList[5]}'"),
-                                ("ImagePath1", f"'{self.DbupdatePath[0]}'"),
-                                ("ImagePath2", f"'{self.DbupdatePath[1]}'"),
-                                ("ImagePath3", f"'{self.DbupdatePath[2]}'"),
-                                ("ImagePath4", f"'{self.DbupdatePath[3]}'"),
-                                ("ImagePath5", f"'{self.DbupdatePath[4]}'"),
-                                ("ImagePath6", f"'{self.DbupdatePath[5]}'"),
-                                ("InputTime", "now()"),
-                            }
-
-                            bearingartDB.writeSql(inputDBData)
-                        else:
-                            # if "1" in self.CompResultList[0] or "1" in self.CompResultList[1] or "1" in self.CompResultList[2] or "1" in self.CompResultList[3] or "1" in self.CompResultList[4]:
-                            inputDBData = {
-                                ("ModelName", f"'{STH.nowModel}'"),
-                                ("Result1", f"'{self.CompResultList[0]}'"),
-                                ("Result2", f"'{self.CompResultList[1]}'"),
-                                ("Result3", f"'{self.CompResultList[2]}'"),
-                                ("Result4", f"'{self.CompResultList[3]}'"),
-                                ("Result5", f"'{self.CompResultList[4]}'"),
-                                ("ImagePath1", f"'{self.DbupdatePath[0]}'"),
-                                ("ImagePath2", f"'{self.DbupdatePath[1]}'"),
-                                ("ImagePath3", f"'{self.DbupdatePath[2]}'"),
-                                ("ImagePath4", f"'{self.DbupdatePath[3]}'"),
-                                ("ImagePath5", f"'{self.DbupdatePath[4]}'"),
-                                ("InputTime", "now()"),
-                            }
-
-                            bearingartDB.writeSql(inputDBData)
-
-                        # 마무리 데이터 정리
-                        print("데이터 순차적 정리(front data)")
-                        # print(self.frontDataList)
-                        for i in range(2, -1, -1):
-                            try:
-                                self.frontDataList[i + 1] = self.frontDataList[i].copy()
-                                self.frontImageList[i + 1] = self.frontImageList[i].copy()
-                                self.frontBlurDataList[i + 1] = self.frontBlurDataList[i].copy()
-                                # self.frontTypeList[i+1] = self.frontTypeList[i].copy()
-                            except:
-                                print("error")
-                        # print(self.frontDataList)
-                        self.frontBlurDataList[0] = [[],[],[]]
-                        print("[INFO] DB 저장 완료 : ", time.time() - STH.startTime)
-
-                    # 불량 5개 카운트하여 신호 추가송신
-                    try:
-                        for i in range(5 if CodeSetup == 'CUP' else 6):
-                            if main_frame.ngSettingList[i][2] == True:
-                                if STH.ngContinuousCount >= int(main_frame.ngSettingList[i][0]):
-                                    print(f"Ng Check Limit Over - {STH.ngContinuousCount}")
-                                    SignalSendCheck = False
-                                    for i in range(6 if CodeSetup == "CONE" else 5):
-                                        if STH.ngContinuousList[i] >= int(main_frame.ngSettingList[i][1]):
-                                            SignalSendCheck = True
-                                            print(f"Ng Check List Over - Camera : {self.UpdateCameraName[i]}, Count : {STH.ngContinuousList[i]}, Limit : {main_frame.ngSettingList[i][1]}")
-                                            logger.info(f"Ng Check List Over - Camera : {self.UpdateCameraName[i]}, Count : {STH.ngContinuousList[i]}, Limit : {main_frame.ngSettingList[i][1]}")
-                                        else:
-                                            print(f"Ng Check List Pass - Camera : {self.UpdateCameraName[i]}, Count : {STH.ngContinuousList[i]}, Limit : {main_frame.ngSettingList[i][1]}")
-                                            logger.info(f"Ng Check List Pass - Camera : {self.UpdateCameraName[i]}, Count : {STH.ngContinuousList[i]}, Limit : {main_frame.ngSettingList[i][1]}")
-                                            pass
-                                    if SignalSendCheck == True:
-                                        SignalSendCheck = False
-                                        # STH.SendDataTrim("W", "D3016", "1")
-                                        STH.ModbusSignalSend(Mode = "NGCONTINUITY", Value = 1)
-                                    STH.ngContinuousCount = 0
-                                    STH.ngContinuousList = [0] * (6 if CodeSetup == "CONE" else 5)
-                                else:
-                                    print(f"Ng Check Limit Count Lack")
-                            else:
-                                print("Ng Continuous Check Not Activate")
-                                logger.info("Ng Continuous Check Not Activate")
-                    except:
-                        print(f"Ng Continuous Check Process Error : {traceback.format_exc()}")
-                        logger.info(f"Ng Continuous Check Process Error : {traceback.format_exc()}")
-
-                    if main_frame.bypass_mode == True:
-                        pass
-                    else:
-                        if len(ngCheckList) < 1:
-                            pass
-                        else:
-                            for x, value in enumerate(ngCheckList):
-                                # STH.Modbusclient.write_register(address=41606+x, value=int(STH.ModbusCageSetting[self.SendingBadType[value]]))
-                                pass
-                    self.CompImageList = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                    # self.CompBlurDataList = [[],[],[],[],[],[]] if CodeSetup == "CONE" else [[], [], [], [], []]
-                    self.CompResultList = ["10000000000000"] * (6 if CodeSetup == "CONE" else 5)
-                    CountDataSave()
-
-            except Exception as ex:
-                logger.info(f"Warning : 데이터 후처리 스레드 에러 - {ex} - {traceback.format_exc()}")
-
-
-class lightSignalTRAN(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-        self.lightConnectRetry()
-        self.lightValue1 = [170, 170, 170, 255, 255, 255, 150, 150]
-        self.lightValue2 = 0
-
-    def lightConnectRetry(self):
-        countingNum = 9
-
-        for i in range(9):
-            # countingEnd = 0
-            try:
-                countingNum = countingNum - 1
-                osCommend = "sudo chmod a+rw /dev/ttyUSB" + str(countingNum)
-                os.system(osCommend)
-                self.SerialPort, self.SerialBaud = "/dev/ttyUSB" + str(countingNum), 19200
-                self.ser = serial.Serial(self.SerialPort, self.SerialBaud, timeout=0)
-
-            except Exception as ex:
-                print(ex)
-                print("[INFO] Serial Connecting Error - Number : ", self.SerialPort)
-
-    def run(self):
-        while True:
-            self.read = self.ser.readline()  # .decode("ascii").strip()
-
-            # print(self.read)
-
-            time.sleep(0.08)
-
-    def sendMsg(self, data):
-        self.ser.write(data)
-
-    def check_sum(self, data1, data2, data3, data4, data5, data6, data7, data8):
-        result_data = data1 ^ data2 ^ data3 ^ data4 ^ data5 ^ data6 ^ data7 ^ data8
-        return result_data
-
-
-class serialTRAN(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-        ################# 시리얼 포트 변경 필요 #################
-        # os.system('sudo chmod a+rw /dev/ttyUSB0')
-        self.nowModel = ""
-        self.MDdict = {
-            1: "MODEL1",
-            2: "MODEL2",
-            3: "MODEL3",
-            4: "MODEL4",  ########################################### need to change
-            5: "MODEL5",
-            6: "MODEL6",
-            7: "MODEL7",
-            8: "MODEL8",
-            9: "MODEL9",
-            10: "MODEL10",
-            11: "MODEL11",
-            12: "MODEL12",
-            13: "MODEL13",
-            14: "MODEL14",
-            15: "MODEL15",
-            15: "MODEL15",
-            16: "MODEL16",
-            17: "MODEL17",
-            18: "MODEL18",
-            19: "MODEL19",
-            20: "MODEL20",
-            21: "MODEL21",
-            22: "MODEL22",
-            23: "MODEL23",
-            24: "MODEL24",
-            25: "MODEL25",
-            26: "MODEL26",
-            27: "MODEL27",
-            28: "MODEL28",
-            29: "MODEL29",
-            30: "MODEL30"
-        }
-
-        # self.connectRetry()
-        self.CheckFirstTrigger = False
-        self.ConnectModbus()
-        
-        self.startTime = time.time()
-        self.requastTime = time.time()
-        self.DataTrimCheck = False
-        self.StartCheck = False
-        self.ManualMode = True
-        self.StartMode = "00"
-        
-
-        self.recvModbusChecker = [0,0,0,0,0,0,0,0,0,0]
-        self.ModbusSessionChecker = [False,False,False,False,False,False,False,False,False,False]
-        self.ModbusDefaultRecvAddress = 0
-        self.DisposeMode = None
-        self.ReworkMode = False
-        self.EmergencyMode = False
-
-        self.ngContinuousCount = 0
-        self.ngContinuousList = [0, 0, 0, 0, 0, 0]
-
-    def ConnectModbus(self):
-        while True:
-            try:
-                try:
-                    self.Modbusclient.close()
-                except:
-                    pass
-                self.Modbusclient = ModbusTcpClient(host = ModebusHostIp, port = ModebusHostPort, timeout = 5)
-                # self.Modbusclient.write_register(address=int(data1), value=int(data2), unit=0x01)
-                # self.Modbusclient.write_registers(address=200, values=[1,0,0,0,0,0,0,0,0,0,0], unit=0x01)
-                if self.CheckFirstTrigger == False:
-                    self.ModbusSignalSend(Mode = "RESET")
-                    self.CheckFirstTrigger = True
-                self.ModbusSignalSend(Mode = "RECONNECT")
-                self.ModbusSignalSend(Mode = "ALIVE", Value = 1)
-                print(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-                logger.info(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-                return
-            except:
-                print(f'Modbus Connect Error - {traceback.format_exc()}')
-                logger.info(f'Modbus Connect Error - {traceback.format_exc()}')
-                time.sleep(1)
-
-    def ModbusSignalSend(self, Mode, Value = 0):
-        try:
-            idx = int(Value)
-            if Mode == "RESET":
-                self.Modbusclient.write_registers(address=200, values=[0,0,0,0,0,0,0,0,0,0,0], unit=0x01)
-            elif Mode == "REBOOT":
-                self.Modbusclient.write_registers(address=200, values=[0,0,0,0,0,0,0,0,0,2,0], unit=0x01)
-            elif Mode == "ALIVE":
-                self.Modbusclient.write_register(address=200, value=idx, unit=0x01)
-            elif Mode == "MODEL":
-                self.Modbusclient.write_register(address=201, value=idx, unit=0x01)
-            elif Mode == "LINEMODE":
-                self.Modbusclient.write_register(address=202, value=idx, unit=0x01)
-            elif Mode == "READY":
-                self.Modbusclient.write_register(address=203, value=idx, unit=0x01)
-            elif Mode == "BUSY":
-                self.Modbusclient.write_register(address=204, value=idx, unit=0x01)
-            elif Mode == "RESULTSESSION":
-                self.Modbusclient.write_register(address=205, value=idx, unit=0x01)
-            elif Mode == "RESULT1":
-                self.Modbusclient.write_register(address=206, value=idx, unit=0x01)
-            elif Mode == "RESULT2":
-                self.Modbusclient.write_register(address=207, value=idx, unit=0x01)
-            elif Mode == "NGCONTINUITY":
-                self.Modbusclient.write_register(address=208, value=idx, unit=0x01)
-            elif Mode == "STATE":
-                self.Modbusclient.write_register(address=209, value=idx, unit=0x01)
-            elif Mode == "PLCSETUP":
-                self.Modbusclient.write_register(address=210, value=idx, unit=0x01)
-            elif Mode == "RECONNECT":
-                self.Modbusclient.write_registers(address=203, values=[1,0,0,0,0,0,0,0], unit=0x01)
-            if Mode in ["RESET", "REBOOT"]:
-                print(f'Modbus Signal Send > Mode - {Mode}')
-                logger.info(f'Modbus Signal Send > Mode - {Mode}')
-            else:
-                if Mode == 'ALIVE':
-                    pass
-                else:
-                    print(f'Modbus Signal Send > Mode - {Mode}, SendValue - {idx}')
-                    logger.info(f'Modbus Signal Send > Mode - {Mode}, SendValue - {idx}')
-        except:
-            print(f'Modbus Send Error - {traceback.format_exc()}')
-            logger.info(f'Modbus Send Error - {traceback.format_exc()}')
-            time.sleep(1)
-
-    def recvall(self, sock, count):
-        buf = b""
-        while count:
-            newbuf = sock.recv(count)
-            if not newbuf:
-                return None
-            buf += newbuf
-            count -= len(newbuf)
-        return buf
-
-    def ReadDataCheck(self, Data):
-        try:
-            recvData = Data.split("/")
-
-            checkDevice = recvData[1]
-            checkValue = recvData[2]
-            return checkDevice, checkValue
-        except:
-            print(traceback.format_exc())
-            return None, None
-
-    def SendDataTrim(self, Mode, Device, Data):
-        SubData = f"{Mode}/{Device}/{Data}/"
-        WriteData = SubData.ljust(20, "0")
-        self.client_socket.send(WriteData.encode())
-        print(f"send : [{WriteData}]")
-        logger.info(f"[SIGNAL SEND] Mode : {Mode}, Device : {Device}, Data : {Data}")
-
-    def retry_procedure(self):  # 프로그램 재실행 OH
-        text = '[ ★ ] 프로그램 재시작'
-        logger.info(text)
-        print(text)
-        time.sleep(1)
-        python = sys.executable
-        os.execl(python, python, * sys.argv)
-
-    def run(self):
-        while True:
-            if TSD.connect_count == ConnectClientCheck:
-                break
-            time.sleep(1)
-            print("Client All Connect Wait")
-            main_frame.update_signal("Client All Connect Wait")
-        self.ModbusSignalSend(Mode = "ALIVE", Value = 1)
-        print(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-        logger.info(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-        cycleCheckCount = 0
-        while True:
-            try:
-                startTime = time.time()
-                time.sleep(0.1)
-                result = self.Modbusclient.read_holding_registers(self.ModbusDefaultRecvAddress, count=10, unit=0x01)
-                checkData = result.registers
-                
-                # print(checkData)
-
-                for i in range(len(self.recvModbusChecker)):
-                    if self.recvModbusChecker[i] != checkData[i]:
-                        self.recvModbusChecker[i] = checkData[i]
-                        self.ModbusSessionChecker[i] = True
-
-                #PC Alive Cycle Upload
-                cycleCheckCount += 1
-                if cycleCheckCount >= 10:
-                    cycleCheckCount = 0
-                    self.ModbusSignalSend(Mode = "ALIVE", Value = 1)
-                    # print(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-                    # logger.info(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-
-                #PLC Alive Signal Check
-                if self.ModbusSessionChecker[0] == True:
-                    if self.recvModbusChecker[0] == 1:
-                        print(f'[Signal] PLC Alive On Check')
-                        logger.info(f'[Signal] PLC Alive On Check')
-                    elif self.recvModbusChecker[0] == 0:
-                        print(f'[Signal] PLC Alive Off Check')
-                        logger.info(f'[Signal] PLC Alive Off Check')
-                    else:
-                        print(f'[Signal] PLC Alive Signal Error - {self.ModbusDefaultRecvAddress}Address RecvData - {self.recvModbusChecker[0]}')
-                        logger.info(f'[Signal] PLC Alive Off Check')
-                    self.ModbusSessionChecker[0] = False
-
-                #Model Signal Check
-                if self.ModbusSessionChecker[1] == True:
-                    try:
-                        logger.info("[Signal] MODELLOADING Signal Recv")
-                        
-                        main_frame.main_canvas.itemconfig(main_frame.modelloadingView, state="normal")
-                        main_frame.loadingProcessTrigger = None
-                        threading.Thread(target=main_frame.loadingProcessGIF, daemon=True).start()
-                        while True:
-                            print(TSD.connect_count ,  ConnectClientCheck)
-                            if TSD.connect_count == ConnectClientCheck:
-                                break
-                            time.sleep(1)
-                            print("Client All Connect Wait")
-                        indexData = int(self.recvModbusChecker[1])
-                        self.nowModel = DTT.ProductData[indexData-1]
-                        
-                        main_frame.update_signal(f"{self.MDdict[indexData]} recv")
-                        TSD.sendAllClient(self.MDdict[indexData])
-                        print(f"모델신호 {self.MDdict[indexData]} 송신")
-                        main_frame.update_signal("Model Loading")
-                        main_frame.main_canvas.itemconfig(main_frame.productName, text=DTT.ProductData[indexData-1])
-
-                        #modbus Signal Send (Model Session)
-                        self.ModbusSignalSend(Mode = "MODEL", Value = indexData)
-                        self.ModbusSignalSend(Mode = "READY", Value = 0)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 1)
-                    except:
-                        print(traceback.format_exc())
-                        logger.info(f'Modbus Model Process Error - {traceback.format_exc()}')
-
-                    self.ModbusSessionChecker[1] = False
-
-                #Auto OR Manual Signal Check
-                if self.ModbusSessionChecker[2] == True:
-                    if self.recvModbusChecker[2] == 1:
-                        print(f'[Signal] Modbus Auto Signal Recv')
-                        logger.info(f'[Signal] Modbus Auto Signal Recv')
-                        print("자동 모드 실행")
-                        main_frame.update_signal("AUTO recv")
-                        logger.info("[SIGNAL] AUTO Signal Recv")
-                        self.ManualMode = False
-                        # self.SendDataTrim("W", "D3002", f"{value}")
-                        self.ModbusSignalSend(Mode = "LINEMODE", Value = int(self.recvModbusChecker[2]))
-                    elif self.recvModbusChecker[2] == 2:
-                        print(f'[Signal] Modbus Manual Signal Recv')
-                        logger.info(f'[Signal] Modbus Manual Signal Recv')
-                        main_frame.update_signal(f'[Signal] Modbus Manual Signal Recv')
-                        STH.ngContinuousCount = 0
-                        STH.ngContinuousList = [0] * (6 if CodeSetup == "CONE" else 5)
-                        logger.info("[SIGNAL] NG Continuity Inspection Count Reset")
-                        main_frame.update_signal("NG 연속검출 횟수 초기화")
-                        self.ManualMode = True
-                        self.ModbusSignalSend(Mode = "LINEMODE", Value = int(self.recvModbusChecker[2]))
-                        self.ModbusSignalSend(Mode = "NGCONTINUITY", Value = 0)
-
-                        # if DTT.modelLoadingCheck == True: # oh 수동 시 준비완료 제거
-                        #     self.ModbusSignalSend(Mode = "READY", Value = 1)
-
-                        # self.SendDataTrim("W", "D3002", f"{value}")
-                        # self.SendDataTrim("W", "D3003", "1")
-                        # self.SendDataTrim("W", "D3016", "0")
-                    self.ModbusSessionChecker[2] = False
-
-                #Start Signal Check
-                if self.ModbusSessionChecker[3] == True:
-                    if self.recvModbusChecker[3] == 1:
-                        self.startTime = time.time()
-                        self.StartCheck = True
-                        self.DataTrimCheck = True
-                        self.requastTime = time.time()
-                        print(f'[Signal] Modbus Inspection Start Signal ON Recv')
-                        logger.info(f'[Signal] Modbus Inspection Start Signal ON Recv')
-
-                        logger.info("[SIGNAL] Start Signal Recv")
-                        main_frame.update_signal("Start Recv")
-
-                        # self.SendDataTrim("R", "D3109", "1")
-                        # data = self.recvall(self.client_socket, 20).decode().strip()
-                        # Pin1device, Pin1value = self.ReadDataCheck(data)
-
-                        # self.SendDataTrim("R", "D3110", "1")
-                        # data = self.recvall(self.client_socket, 20).decode().strip()
-                        # Pin2device, Pin2value = self.ReadDataCheck(data)
-
-                        pinData = self.Modbusclient.read_holding_registers(self.ModbusDefaultRecvAddress+4, count=2, unit=0x01)
-                        pinCheckData = pinData.registers
-
-                        self.StartMode = f"{pinCheckData[0]}{pinCheckData[1]}"
-                        print(f"Start Mode - {self.StartMode}")
-                        logger.info(f"[SIGNAL Check] StartMode - {self.StartMode}")
-
-                        DTT.AllDataRecv = 0
-                        DTT.AllImageRecv = 0
-
-                        print("[INFO] START 수신 : ", time.time() - STH.startTime)
-
-                        TSD.sendAllClient("START")
-
-                        DTT.inspectionSession = True
-                        print("[INFO] Start 시그널 처리 완료 : ", time.time() - STH.startTime)
-                        # self.SendDataTrim("W", "D3003", "0")
-                        self.ModbusSignalSend(Mode = "READY", Value = 0)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 1)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 1)
-
-                    elif self.recvModbusChecker[3] == 0:
-                        print(f'[Signal] Modbus Inspection Start Signal OFF Recv')
-                        logger.info(f'[Signal] Modbus Inspection Start Signal OFF Recv')
-
-                    else:
-                        print(f'[Signal] Modbus Inspection Start Signal Error')
-                        logger.info(f'[Signal] Modbus Inspection Start Signal Error - {self.ModbusDefaultRecvAddress+3}Address RecvData - {self.recvModbusChecker[3]}')
-                    self.ModbusSessionChecker[3] = False
-
-                #InsPart1 Product Signal Check
-                if self.ModbusSessionChecker[4] == True:
-                    if self.recvModbusChecker[4] == 1:
-                        print('[Signal] Modbus InspectionPart1 Product ON Signal Recv')
-                        logger.info('[Signal] Modbus InspectionPart1 Product ON Signal Recv')
-                    elif self.recvModbusChecker[4] == 0:
-                        print('[Signal] Modbus InspectionPart1 Product OFF Signal Recv')
-                        logger.info('[Signal] Modbus InspectionPart1 Product OFF Signal Recv')
-                    else:
-                        print('[Signal] Modbus InspectionPart1 Product Signal Error')
-                        logger.info(f'[Signal] Modbus InspectionPart1 Product Signal Error - {self.ModbusDefaultRecvAddress+4}Address RecvData - {self.recvModbusChecker[4]}')
-                    self.ModbusSessionChecker[4] = False
-
-                #InsPart2 Product Signal Check
-                if self.ModbusSessionChecker[5] == True:
-                    if self.recvModbusChecker[5] == 1:
-                        print('[Signal] Modbus InspectionPart2 Product ON Signal Recv')
-                        logger.info('[Signal] Modbus InspectionPart2 Product ON Signal Recv')
-                    elif self.recvModbusChecker[5] == 0:
-                        print('[Signal] Modbus InspectionPart2 Product OFF Signal Recv')
-                        logger.info('[Signal] Modbus InspectionPart2 Product OFF Signal Recv')
-                    else:
-                        print('[Signal] Modbus InspectionPart2 Product Signal Error')
-                        logger.info(f'[Signal] Modbus InspectionPart2 Product Signal Error - {self.ModbusDefaultRecvAddress+5}Address RecvData - {self.recvModbusChecker[5]}')
-                    self.ModbusSessionChecker[5] = False                    
-
-                if (time.time()-self.requastTime) > 5 and self.StartCheck == True:
-                    self.StartCheck = None
-                    print('[Signal] Modbus ResultRequest Forced ON Signal recv')
-                    logger.info('[Signal] Modbus ResultRequest Forced ON Signal recv')
-                    main_frame.update_signal("Result Requast Forced recv")
-                    TSD.sendAllClient("RESULTREQUEST")
-                    self.ModbusSignalSend(Mode = "RESULTSESSION", Value = 1)
-                    print("[INFO] RESULTREQUEST 송신 : ", time.time() - STH.startTime)
-
-                #ResultRequest Signal Check
-                if self.ModbusSessionChecker[6] == True:
-                    if self.recvModbusChecker[6] == 1:
-                        if self.StartCheck == True:
-                            self.StartCheck = False
-                            print('[Signal] Modbus ResultRequest ON Signal recv')
-                            logger.info('[Signal] Modbus ResultRequest ON Signal recv')
-                            main_frame.update_signal("Result Requast recv")
-                            TSD.sendAllClient("RESULTREQUEST")
-                            self.ModbusSignalSend(Mode = "RESULTSESSION", Value = 1)
-                            print("[INFO] RESULTREQUEST 송신 : ", time.time() - STH.startTime)
-                        else:
-                            logger.info('[Notice] Forced Request Session - PASS')
-                    elif self.recvModbusChecker[6] == 0:
-                        print('[Signal] Modbus ResultRequest OFF Signal recv')
-                        logger.info('[Signal] Modbus ResultRequest OFF Signal recv')
-                    else:
-                        print('[Signal] Modbus ResultRequest Signal Error')
-                        logger.info(f'[Signal] Modbus ResultRequest Signal Error - {self.ModbusDefaultRecvAddress+6}Address RecvData - {self.recvModbusChecker[6]}')
-                    self.ModbusSessionChecker[6] = False
-
-                #Ins Result PLC Check Complete Signal Check
-                if self.ModbusSessionChecker[7] == True:
-                    if self.recvModbusChecker[7] == 1:
-                        print('[Signal] Modbus PLC Complete ON Signal recv')
-                        main_frame.update_signal('Modbus PLC Complete')
-                        logger.info('[Signal] Modbus PLC Complete ON Signal recv')
-                        self.ModbusSignalSend(Mode = "READY", Value = 1)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 0)
-                        self.ModbusSignalSend(Mode = "RESULTSESSION", Value = 0)
-                        self.ModbusSignalSend(Mode = "RESULT1", Value = 0)
-                        self.ModbusSignalSend(Mode = "RESULT2", Value = 0)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 0)
-                        # self.SendDataTrim("W", "D3006", "0")
-                        # self.SendDataTrim("W", "D3007", "0")
-                        # self.SendDataTrim("W", "D3003", "1")
-                    elif self.recvModbusChecker[7] == 0:
-                        print('[Signal] Modbus PLC Complete OFF Signal recv')
-                        logger.info('[Signal] Modbus PLC Complete OFF Signal recv')
-                    else:
-                        print('[Signal] Modbus PLC Complete Signal Error')
-                        logger.info(f'[Signal] Modbus PLC Complete Signal Error - {self.ModbusDefaultRecvAddress+7}Address RecvData - {self.recvModbusChecker[7]}')
-                    self.ModbusSessionChecker[7] = False
-
-                #Vision Modify Signal Check
-                if self.ModbusSessionChecker[8] == True:
-                    if self.recvModbusChecker[8] == 0:
-                        print('[Signal] Modbus Vision Modify Signal OFF Check')
-                        logger.info('[Signal] Modbus Vision Modify Signal OFF Check')
-                        if self.DisposeMode == True:
-                            self.DisposeMode = False
-                            logger.info("[SIGNAL] Dispose Session Complete - Process Reset")
-                            main_frame.update_signal('Dispose Session Complete')
-                            DTT.frontDataList = [
-                                [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                                [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                                [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                                [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                            ]
-                            DTT.frontImageList = [[[], [], []], [[], [], []], [[], [], []], [[], [], []]]
-                            DTT.frontBlurDataList = [[[],[],[]], [[],[],[]], [[],[],[]], [[],[],[]]]
-                            DTT.CompImageList = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                            # DTT.CompBlurDataList = [[],[],[],[],[],[]] if CodeSetup == "CONE" else [[], [], [], [], []]
-                            DTT.CompResultList = ["10000000000000"] * (6 if CodeSetup == "CONE" else 5)
-                            self.ModbusSignalSend(Mode = "STATE", Value = 0)
-                        if self.ReworkMode == True:
-                            logger.info("[SIGNAL] Rework Session Complete - Process Reset")
-                            main_frame.update_signal('Rework Session Complete')
-                            self.ReworkMode = False
-                            self.ManualMode = False
-                            self.ModbusSignalSend(Mode = "STATE", Value = 0)
-                        if self.EmergencyMode == True:
-                            logger.info("[SIGNAL] Emergency Session Complete - Process Reset")
-                            main_frame.update_signal('Emergency Session Complete')
-                            self.EmergencyMode = False
-                            self.ModbusSignalSend(Mode = "RECONNECT")
-                            self.ModbusSignalSend(Mode = "ALIVE", Value = 1)
-                            self.ModbusSignalSend(Mode = "READY", Value = 1)
-                    elif self.recvModbusChecker[8] == 1:
-                        print('[Signal] Modbus Vision Modify Signal ON(Vision Process Reset - 1) Check')
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(Vision Process Reset - 1) Check')
-                        main_frame.update_signal("Vision Process Reset recv")
-                        self.ModbusSignalSend(Mode = "READY", Value = 0)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 1)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 4)
-                        TSD.sendAllClient("CLIENTRESET")
-                        DTT.frontDataList = [
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                        ]
-                        DTT.frontImageList = [[[], [], []], [[], [], []], [[], [], []], [[], [], []]]
-                        DTT.frontBlurDataList = [[[],[],[]], [[],[],[]], [[],[],[]], [[],[],[]]]
-                        DTT.CompImageList = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        # DTT.CompBlurDataList = [[],[],[],[],[],[]] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        DTT.CompResultList = ["10000000000000"] * (6 if CodeSetup == "CONE" else 5)
-
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            main_frame.main_canvas.itemconfig(main_frame.main_cam[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="hidden")
-                            main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="hidden")
-
-                        for i in range(10):
-                            main_frame.main_canvas.itemconfig(main_frame.bad_image1[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_text1[i], text="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_image2[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_text2[i], text="")
-                        DTT.nowbadTypeIndex1 = 10
-                        DTT.nowbadTypeIndex2 = 10
-                        ngcage_frame.ngCageUpdate1 = [
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                        ]
-                        ngcage_frame.ngCageUpdate2 = [
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                            [False, [None, None, None, None, None], [None, None, None, None, None], [None],],
-                        ]
-                        main_frame.bad_text1_inputData = [None] * 10
-                        main_frame.bad_text2_inputData = [None] * 10
-
-                        main_frame.mainbadCheckList = [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25] if CodeSetup == "CONE" else [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25]
-                        main_frame.mainbadCheckListboxData = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        main_frame.mainbadCheckListTotalcount = [0, 0, 0, 0, 0, 0] if CodeSetup == "CONE" else [0, 0, 0, 0, 0]
-                        DTT.AllDataRecv = 0
-                        DTT.AllImageRecv = 0
-
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'hidden')
-                        CountDataSave()
-                        time.sleep(1)
-                        self.ModbusSignalSend(Mode = "READY", Value = 1)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 0)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 0)
-                        # self.SendDataTrim("W", "D3003", "1")
-
-                    elif self.recvModbusChecker[8] == 2:
-                        print('[Signal] Modbus Vision Modify Signal ON(Vision Count Reset - 2) Check')
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(Vision Count Reset - 2) Check')
-                        self.ModbusSignalSend(Mode = "READY", Value = 0)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 1)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 4)
-                        main_frame.update_signal("Vision Count Reset recv")
-                        main_frame.total_count = main_frame.ok_count = main_frame.ng_count = 0
-                        main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-                        main_frame.main_canvas.itemconfig(main_frame.okText, text=main_frame.ok_count)
-                        main_frame.main_canvas.itemconfig(main_frame.ngText, text=main_frame.ng_count)
-                        main_frame.mainbadCheckList = [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25] if CodeSetup == "CONE" else [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25]
-                        main_frame.mainbadCheckListboxData = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        main_frame.mainbadCheckListTotalcount = [0, 0, 0, 0, 0, 0] if CodeSetup == "CONE" else [0, 0, 0, 0, 0]
-                        DTT.AllDataRecv = 0
-                        DTT.AllImageRecv = 0
-                        
-                        CountDataSave()
-                        time.sleep(1)
-                        self.ModbusSignalSend(Mode = "READY", Value = 1)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 0)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 0)
-                        # self.SendDataTrim("W", "D3003", "1")
-
-                    elif self.recvModbusChecker[8] == 3:  # 리부트 : 컴퓨터 재실행
-                        print('[Signal] Modbus Vision Modify Signal ON(Vision Reboot - 3) Check')
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(Vision Reboot - 3) Check')
-                        main_frame.update_signal("Vision Reboot recv")
-                        CountDataSave()
-                        TSD.sendAllClient("REBOOT")
-                        self.ModbusSignalSend(Mode = 'REBOOT')
-
-                        os.system("shutdown -r") 
-
-                    elif self.recvModbusChecker[8] == 4:
-                        print('[Signal] Modbus Vision Modify Signal ON(Dispose Work - 4) Check')
-                        main_frame.update_signal("Modbus Vision Dispose Work On")
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(Dispose Work - 4) Check')
-                        self.DisposeMode = True
-                        self.ModbusSignalSend(Mode = "STATE", Value = 3)
-
-                    elif self.recvModbusChecker[8] == 5:
-                        print('[Signal] Modbus Vision Modify Signal ON(NGCAGERESET Work - 5) Check')
-                        main_frame.update_signal("Modbus Vision NGCAGERESET Work On")
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(NGCAGERESET Work - 5) Check')
-                        self.ModbusSignalSend(Mode = "READY", Value = 0)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 1)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 4)
-                        # self.MxSignalCheck[8] = True
-                        # self.Modbusclient.write_coils(address = 31088, count = 2, values = [False,True])
-
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            main_frame.main_canvas.itemconfig(main_frame.main_cam[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="hidden")
-                            main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="hidden")
-                        for i in range(10):
-                            main_frame.main_canvas.itemconfig(main_frame.bad_image1[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_text1[i], text="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_image2[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_text2[i], text="")
-                        DTT.nowbadTypeIndex1 = 10
-                        DTT.nowbadTypeIndex2 = 10
-                        ngcage_frame.ngCageUpdate1 = [[False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]]]
-                        ngcage_frame.ngCageUpdate2 = [[False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]]]
-                        main_frame.bad_text1_inputData = [None] * 10
-                        main_frame.bad_text2_inputData = [None] * 10
-
-                        main_frame.total_count -= main_frame.ng_count
-                        main_frame.ng_count = 0
-                        main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-                        main_frame.main_canvas.itemconfig(main_frame.okText, text=main_frame.ok_count)
-                        main_frame.main_canvas.itemconfig(main_frame.ngText, text=main_frame.ng_count)
-                        main_frame.mainbadCheckList = [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25] if CodeSetup == "CONE" else [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25]
-                        main_frame.mainbadCheckListboxData = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        main_frame.mainbadCheckListTotalcount = [0, 0, 0, 0, 0, 0] if CodeSetup == "CONE" else [0, 0, 0, 0, 0]
-                        DTT.AllDataRecv = 0
-                        DTT.AllImageRecv = 0
-                        # for i in range(6 if CodeSetup == "CONE" else 5):
-                        #     main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'hidden')
-                        CountDataSave()
-                        time.sleep(1)
-                        # self.SendDataTrim("W", "D3003", "1")
-                        self.ModbusSignalSend(Mode = "READY", Value = 1)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 0)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 0)
-
-                    elif self.recvModbusChecker[8] == 6:
-                        print('[Signal] Modbus Vision Modify Signal ON(NGCAGEBUFFRESET Work - 6) Check')
-                        main_frame.update_signal("Modbus Vision NGCAGEBUFFRESET Work On")
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(NGCAGEBUFFRESET Work - 6) Check')
-                        self.ModbusSignalSend(Mode = "READY", Value = 0)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 1)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 6)
-                        # self.MxSignalCheck[8] = True
-                        # self.Modbusclient.write_coils(address = 31088, count = 2, values = [False,True])
-
-                        for i in range(6 if CodeSetup == "CONE" else 5):
-                            main_frame.main_canvas.itemconfig(main_frame.main_cam[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.main_ok[i], state="hidden")
-                            main_frame.main_canvas.itemconfig(main_frame.main_ng[i], state="hidden")
-                        for i in range(10):
-                            main_frame.main_canvas.itemconfig(main_frame.bad_image1[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_text1[i], text="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_image2[i], image="")
-                            main_frame.main_canvas.itemconfig(main_frame.bad_text2[i], text="")
-                        DTT.nowbadTypeIndex1 = 10
-                        DTT.nowbadTypeIndex2 = 10
-                        ngcage_frame.ngCageUpdate1 = [[False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]]]
-                        ngcage_frame.ngCageUpdate2 = [[False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]]]
-                        main_frame.bad_text1_inputData = [None] * 10
-                        main_frame.bad_text2_inputData = [None] * 10
-
-                        # main_frame.total_count -= main_frame.ng_count
-                        # main_frame.ng_count = 0
-                        # main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-                        # main_frame.main_canvas.itemconfig(main_frame.okText, text=main_frame.ok_count)
-                        # main_frame.main_canvas.itemconfig(main_frame.ngText, text=main_frame.ng_count)
-                        # main_frame.mainbadCheckList = [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25] if CodeSetup == "CONE" else [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25]
-                        # main_frame.mainbadCheckListboxData = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        # main_frame.mainbadCheckListTotalcount = [0, 0, 0, 0, 0, 0] if CodeSetup == "CONE" else [0, 0, 0, 0, 0]
-                        DTT.AllDataRecv = 0
-                        DTT.AllImageRecv = 0
-                        # for i in range(6 if CodeSetup == "CONE" else 5):
-                        #     main_frame.main_canvas.itemconfig(main_frame.CameraBlur[i], state = 'hidden')
-                        CountDataSave()
-                        time.sleep(1)
-                        # self.SendDataTrim("W", "D3003", "1")
-                        self.ModbusSignalSend(Mode = "READY", Value = 1)
-                        self.ModbusSignalSend(Mode = "BUSY", Value = 0)
-                        self.ModbusSignalSend(Mode = "STATE", Value = 0)
-                    elif self.recvModbusChecker[8] == 7:
-                        print('[Signal] Modbus Vision Modify Signal ON(Rework - 7) Check')
-                        main_frame.update_signal("Modbus Vision Rework On")
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(Rework - 7) Check')
-                        self.ManualMode = True
-                        self.ReworkMode = True
-                        self.ModbusSignalSend(Mode = "STATE", Value = 7)
-                    elif self.recvModbusChecker[8] == 8:
-                        print('[Signal] Modbus Vision Modify Signal ON(Emergency - 8) Check')
-                        main_frame.update_signal("Modbus Vision Emergency On")
-                        logger.info('[Signal] Modbus Vision Modify Signal ON(Emergency - 8) Check')
-                        DTT.frontDataList = [
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                            [DTT.NoneData, DTT.NoneData, DTT.NoneData],
-                        ]
-                        DTT.frontImageList = [[[], [], []], [[], [], []], [[], [], []], [[], [], []]]
-                        DTT.frontBlurDataList = [[[],[],[]], [[],[],[]], [[],[],[]], [[],[],[]]]
-                        DTT.CompImageList = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        # DTT.CompBlurDataList = [[],[],[],[],[],[]] if CodeSetup == "CONE" else [[], [], [], [], []]
-                        DTT.CompResultList = ["10000000000000"] * (6 if CodeSetup == "CONE" else 5)
-                        DTT.AllDataRecv = 0
-                        DTT.AllImageRecv = 0
-                        self.EmergencyMode = True
-                        self.ModbusSignalSend(Mode = "STATE", Value = 8)
-                    else:
-                        print('[Signal] Modbus Vision Modify Signal Error')
-                        logger.info(f'[Signal] Modbus Vision Modify Signal Error - {self.ModbusDefaultRecvAddress+8}Address RecvData - {self.recvModbusChecker[8]}')
-                    self.ModbusSessionChecker[8] = False
-                # print(f'One Check Cycle Time - {time.time() - startTime}')
-
-                if TE.reset == True: # OH
-                    print('[TRIGGER] 08:00 Ngcage Reset')
-                    main_frame.update_signal("[TRIGGER] 08:00 Ngcage Reset")
-                    logger.info('[TRIGGER] 08:00 Ngcage Reset')
-
-                    print("ng list delete")
-                    for i in range(10):
-                        main_frame.main_canvas.itemconfig(main_frame.bad_image1[i], image="")
-                        main_frame.main_canvas.itemconfig(main_frame.bad_text1[i], text="")
-                        main_frame.main_canvas.itemconfig(main_frame.bad_image2[i], image="")
-                        main_frame.main_canvas.itemconfig(main_frame.bad_text2[i], text="")
-                    DTT.nowbadTypeIndex1 = 10
-                    DTT.nowbadTypeIndex2 = 10
-                    ngcage_frame.ngCageUpdate1 = [[False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]]]
-                    ngcage_frame.ngCageUpdate2 = [[False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]], [False, [None, None, None, None, None], [None, None, None, None, None], [None]]]
-                    main_frame.bad_text1_inputData = [None] * 10
-                    main_frame.bad_text2_inputData = [None] * 10
-
-                    main_frame.mainbadCheckList = [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25] if CodeSetup == "CONE" else [[0] * 25, [0] * 25, [0] * 25, [0] * 25, [0] * 25]
-                    main_frame.mainbadCheckListboxData = [[], [], [], [], [], []] if CodeSetup == "CONE" else [[], [], [], [], []]
-                    main_frame.mainbadCheckListTotalcount = [0, 0, 0, 0, 0, 0] if CodeSetup == "CONE" else [0, 0, 0, 0, 0]
-
-                    CountDataSave()
-                    TE.reset = False
-
-            except:
-                print(f'Modbus Communication Error - {traceback.format_exc()}')
-                logger.info(f'Modbus Communication Error - {traceback.format_exc()}')
-                self.ConnectModbus()
-
-        
-    def connectRetry(self):
-        while True:
-            try:
-                try:
-                    self.client_socket.close()
-                except:
-                    pass
-                print("Notice : [Socket Connecting. wait please]")
-                logger.info("Notice : [Socket Connecting. wait please]")
-                self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.client_socket.connect((HOST, PORT))
-                print("Notice : [Socket Connected]")
-                logger.info("Notice : [Socket Connect Complete]")
-                # self.SendDataTrim("W", "D3000", "0")
-                # self.SendDataTrim("W", "D3001", "0")
-                # self.SendDataTrim("W", "D3002", "0")
-                # self.SendDataTrim("W", "D3003", "0")
-                # self.SendDataTrim("W", "D3006", "0")
-                # self.SendDataTrim("W", "D3007", "0")
-                # self.SendDataTrim("W", "D3016", "0")
-                self.ModbusSignalSend(Mode = "RESET")
-                self.ModbusSignalSend(Mode = "ALIVE", Value = 1)
-                print(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-                logger.info(f'Modbus Signal Send > Mode - ALIVE, SendValue - 1')
-                break
-            except:
-                time.sleep(1)
-                print(f"Notice : [Socket Connect Error] {traceback.format_exc()}")
-                logger.info("Notice : [Socket Connect Error]")
-
-
-from multiprocessing import Process
-from multiprocessing import Queue as MQueue
-
-
-def SaveImages(MQ):
-    while True:
-        if not MQ.empty():
-            try:
-                # startTime = time.time()
-                data = MQ.get()
-                foldername = data[0]
-                filename = data[1]
-
-                if not (os.path.isdir(foldername)):
-                    os.makedirs(os.path.join(foldername))
-
-                cv2.imwrite(foldername + "/" + filename, data[2])
-                # print('{} image saved'.format(filename))
-                # print("[INFO] Elapesed time : ", time.time() - startTime)
-
-            except Exception as ex:
-                # print('M - ', ex)
-                pass
-        else:
-            pass
-            time.sleep(1)
-
-
-class MysqlDB:
-    def __init__(self):
-        self.host = "localhost"
-        self.user = "root"
-        self.password = "yous7051"
-        self.dbname = "bearingart"
-
-    def readSql_View(self, ModelName = None, StartSearch = None, EndSearch = None):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        curs = db.cursor()
-        sql = "select * from production_status"
-        addvalue = False
-
-        if ModelName is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "model='{}'".format(ModelName)
-
-        if StartSearch is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "DateHour >= '{}'".format(StartSearch)
-
-        if EndSearch is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "DateHour <= '{}'".format(EndSearch)
-        
-        print(sql)
-
-        curs.execute(sql)
-        rows = curs.fetchall()
-        
-        # self.writeExcel(rows, text, dirName=dirs)
-        db.close()
-
-        # print(rows)
-
-        return rows
-
-    def readSql_Load(self, ModelName = None, CheckDate=None, CheckHour=None):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        curs = db.cursor()
-        sql = "select * from production_status"
-        addvalue = False
-
-        if ModelName is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "model='{}'".format(ModelName)
-
-        if CheckDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "UpdateDate >= '{}'".format(CheckDate)
-
-        if CheckDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "DateHour='{}'".format(CheckHour)
-
-        print(sql)
-
-        curs.execute(sql)
-        rows = curs.fetchall()
-        
-        # self.writeExcel(rows, text, dirName=dirs)
-        db.close()
-
-        # print(rows)
-
-        return rows
-
-    def updateSql(self, updateValue):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        param = values = ""
-        curs = db.cursor()
-
-        sql = f"UPDATE production_status SET Total = {updateValue[0]}, Ok = {updateValue[1]}, Ng = {updateValue[2]}, CriticalNg = {updateValue[3]} WHERE UpdateDate = '{updateValue[4]}' AND model = '{updateValue[5]}' AND DateHour = '{updateValue[6]}'"
-        print(sql,'\n\n\n')
-        curs.execute(sql)
-        db.commit()
-        db.close()
-        pass
-
-    #'model','total','ok','ng','Date',
-
-    def writeSql_count(self, valueList):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        param = values = ""
-        curs = db.cursor()
-        for name, val in valueList:
-            param = param + name + ", "
-            values = values + val + ", "
-
-        sql = "INSERT INTO production_status ({}) VALUES ({})".format(param[:-2], values[:-2])
-                #값을 넣겠다 / ~~에 / ELENTEC_COUNT테이블에 / ~~필드에 / 무슨 값을 / ~~값
-        print(sql)
-        curs.execute(sql)
-        db.commit()
-        db.close()
-
-    def dbCount_Process(self, model, result):
-
-        today = str(datetime.date.today())
-        today_Hour = str(datetime.datetime.now())[0:13]
-
-        checkSql = self.readSql_Load(model, today, today_Hour)
-
-        try:
-            #db 데이터 존재 o
-            for i, index in enumerate(checkSql[0]):
-                if i == 2:
-                    totalCount = int(index)
-                if i == 3:
-                    okCount = int(index)
-                if i == 4:
-                    ngCount = int(index)
-                if i == 5:
-                    CriticalNg = int(index)
-
-            if result == 'NG':
-                totalCount += 1
-                ngCount += 1
-            elif result == 'CRI':
-                totalCount += 1
-                CriticalNg += 1
-            else:
-                totalCount += 1
-                okCount += 1
-            
-            updateValue = [totalCount, okCount, ngCount, CriticalNg, today, model, today_Hour]
-            self.updateSql(updateValue)
-        except:
-            #db 데이터 존재 x
-            print('None Data')
-            totalCount = 0
-            okCount = 0
-            ngCount = 0
-            CriticalNg = 0
-            inputDBData = {
-                ("model", f"'{model}'"),
-                ("Total", f"'{totalCount}'"),
-                ("Ok", f"'{okCount}'"),
-                ("Ng", f"'{ngCount}'"),
-                ("CriticalNg", f"'{CriticalNg}'"),
-                ("UpdateDate", f"now()"),
-                ("DateHour", f"'{today_Hour}'")
-            }
-            self.writeSql_count(inputDBData)
-
-            if result == 'NG':
-                totalCount += 1
-                ngCount += 1
-            elif result == 'CRI':
-                totalCount += 1
-                CriticalNg += 1
-            else:
-                totalCount += 1
-                okCount += 1
-            updateValue = [totalCount, okCount, ngCount, CriticalNg, today, model, today_Hour]
-            self.updateSql(updateValue)
-
-    # 토탈, ok, ng, 검사결과, 검사시간, 결과이미지 경로
-    def readSql_Cone(
-        self, ModelName=None, Result1=None, Result2=None, Result3=None, Result4=None, Result5=None, Result6=None, ImagePath1=None, ImagePath2=None, ImagePath3=None, ImagePath4=None, ImagePath5=None, ImagePath6=None, StartDate=None, EndDate=None,
-    ):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        curs = db.cursor()
-        sql = "select * from data"
-        addvalue = False
-        DataChangeCheck = False
-
-        if Result1 == DTT.OKdata or Result2 == DTT.OKdata or Result3 == DTT.OKdata or Result4 == DTT.OKdata or Result5 == DTT.OKdata or Result6 == DTT.OKdata:
-            DataChangeCheck = True
-        if Result1 == "NG" or Result2 == "NG" or Result3 == "NG" or Result4 == "NG" or Result5 == "NG" or Result6 == "NG":
-            DataChangeCheck = None
-
-        if ModelName is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ModelName='{}'".format(ModelName)
-
-        if Result1 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-
-            if DataChangeCheck == None:
-                # add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "(Result1 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "(Result1='{}'".format(Result1)
-            addvalue = True
-
-        if Result2 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result2='{}'".format(Result2)
-            elif DataChangeCheck == None:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result2 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result2='{}'".format(Result2)
-            addvalue = True
-
-        if Result3 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result3='{}'".format(Result3)
-            elif DataChangeCheck == None:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result3 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result3='{}'".format(Result3)
-            addvalue = True
-
-        if Result4 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result4='{}'".format(Result4)
-            elif DataChangeCheck == None:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result4 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result4='{}'".format(Result4)
-            addvalue = True
-
-        if Result5 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result5='{}'".format(Result5)
-            elif DataChangeCheck == None:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result5 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result5='{}'".format(Result5)
-            addvalue = True
-
-        if Result6 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result6='{}')".format(Result6)
-            elif DataChangeCheck == None:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result6 LIKE '%1%')"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result6='{}')".format(Result6)
-            addvalue = True
-
-        if ImagePath1 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath1='{}'".format(ImagePath1)
-
-        if ImagePath2 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath2='{}'".format(ImagePath2)
-
-        if ImagePath3 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath3='{}'".format(ImagePath3)
-
-        if ImagePath4 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath4='{}'".format(ImagePath4)
-
-        if ImagePath5 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath5='{}'".format(ImagePath5)
-
-        if ImagePath6 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath6='{}'".format(ImagePath6)
-
-        if StartDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "InputTime >= '{}'".format(StartDate)
-
-        if EndDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            if len(EndDate) > 10:
-                sql = sql + add + "InputTime <= '{}'".format(EndDate)
-            else:
-                sql = sql + add + "InputTime <= '{} 23:59:59'".format(EndDate)
-
-        sql = sql + " order by LotNum DESC LIMIT 0,10000"
-
-        # print(sql)
-
-        curs.execute(sql)
-        rows = curs.fetchall()
-
-        # self.writeExcel(rows, text, dirName=dirs)
-        db.close()
-
-        # print(rows)
-
-        return rows
-
-    def readSql_Cup(
-        self, ModelName=None, Result1=None, Result2=None, Result3=None, Result4=None, Result5=None, ImagePath1=None, ImagePath2=None, ImagePath3=None, ImagePath4=None, ImagePath5=None, StartDate=None, EndDate=None,
-    ):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        curs = db.cursor()
-        sql = "select * from data"
-        addvalue = False
-        DataChangeCheck = None
-
-        if Result1 == DTT.OKdata or Result2 == DTT.OKdata or Result3 == DTT.OKdata or Result4 == DTT.OKdata or Result5 == DTT.OKdata:
-            DataChangeCheck = True
-        if Result1 == "NG" or Result2 == "NG" or Result3 == "NG" or Result4 == "NG" or Result5 == "NG":
-            DataChangeCheck = False
-
-        if ModelName is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ModelName='{}'".format(ModelName)
-
-        if Result1 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-
-            if DataChangeCheck == True:
-                # add = " WHERE " if addvalue is False else " OR "
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "(Result1='{}'".format(Result1)
-            elif DataChangeCheck == None:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "(Result1='{}'".format(Result1)
-            else:
-                sql = sql + add + "(Result1 LIKE '%1%'"
-            addvalue = True
-
-        if Result2 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result2='{}'".format(Result2)
-            elif DataChangeCheck == False:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result2 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result2='{}'".format(Result2)
-            addvalue = True
-
-        if Result3 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result3='{}'".format(Result3)
-            elif DataChangeCheck == False:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result3 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result3='{}'".format(Result3)
-            addvalue = True
-
-        if Result4 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result4='{}'".format(Result4)
-            elif DataChangeCheck == False:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result4 LIKE '%1%'"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result4='{}'".format(Result4)
-            addvalue = True
-
-        if Result5 is not None:
-            if DataChangeCheck == True:
-                add = " WHERE " if addvalue is False else " AND "
-                sql = sql + add + "Result5='{}')".format(Result5)
-            elif DataChangeCheck == False:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result5 LIKE '%1%')"
-            else:
-                add = " WHERE " if addvalue is False else " OR "
-                sql = sql + add + "Result5='{}')".format(Result5)
-            addvalue = True
-
-        if ImagePath1 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath1='{}'".format(ImagePath1)
-
-        if ImagePath2 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath2='{}'".format(ImagePath2)
-
-        if ImagePath3 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath3='{}'".format(ImagePath3)
-
-        if ImagePath4 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath4='{}'".format(ImagePath4)
-
-        if ImagePath5 is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "ImagePath5='{}'".format(ImagePath5)
-
-        if StartDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "InputTime >= '{}'".format(StartDate)
-
-        if EndDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            if len(EndDate) > 10:
-                sql = sql + add + "InputTime <= '{}'".format(EndDate)
-            else:
-                sql = sql + add + "InputTime <= '{} 23:59:59'".format(EndDate)
-
-        sql = sql + " order by LotNum DESC LIMIT 0,10000"
-
-        print(sql)
-
-        curs.execute(sql)
-        rows = curs.fetchall()
-
-        # self.writeExcel(rows, text, dirName=dirs)
-        db.close()
-
-        print(rows)
-
-        return rows
-
-    def writeSql(self, valueList):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        param = values = ""
-        curs = db.cursor()
-        for name, val in valueList:
-            param = param + name + ", "
-            values = values + val + ", "
-
-        sql = "INSERT INTO data ({}) VALUES ({})".format(param[:-2], values[:-2])
-
-        curs.execute(sql)
-        db.commit()
-        db.close()
-
-########################################### 엑셀 ##########################################################################################
-
-class TimeExcel:
-    def __init__(self):
-        self.auto_reset = False
-        self.reset = False # OH
-        self.send_mail_success = 'yet' # yet : 대기, true : 성공, false : 실패
-
-    def run(self):
-        while 1 :
-            try :
-                time.sleep(0.8) 
-                save_time = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-                save_time = save_time.split("-")
-
-                hour = save_time[3] 
-                minute = save_time[4]
-                sec = save_time[5]
-
-                nowtime = hour + minute + sec
-                
-                # print(nowtime)
-                if nowtime == '080000' :
-                    self.reset = True
-                    print('08시 카운트 리셋')
-                    Email.SendingListUp()
-                    logger.info(f"08시 카운트 리셋")
-                    self.auto_reset = True
-                    main_frame.total_count = main_frame.ok_count = main_frame.ng_count = 0
-                    main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-                    main_frame.main_canvas.itemconfig(main_frame.okText, text=main_frame.ok_count)
-                    main_frame.main_canvas.itemconfig(main_frame.ngText, text=main_frame.ng_count)
-
-                    WriteData = [main_frame.total_count, main_frame.ok_count, main_frame.ng_count]
-
-                    try:
-                        try:
-                            if not (os.path.isdir(f"CountSave")):
-                                os.makedirs(os.path.join(f"CountSave"))
-                        except OSError as e:
-                            pass
-
-                        with open(f"CountSave/Count.pickle", "wb") as file:
-                            pickle.dump(WriteData, file)
-                    except Exception as ex:
-                        logger.info(f"Warning : 피클파일 저장 에러 - {ex} \n {traceback.format_exc()}")
-
-                    d_today = datetime.date.today()
-                    PXM.Today = d_today.strftime('%Y-%m-%d')
-                    PXM.Yesterday = d_today - datetime.timedelta(1)
-
-                    PXM.ExcelDataLoad('BearingArt_DaysReport.xlsx')
-                    returnDict = DB.DB_DataLoad_Refine()
-                    # PXM.ExcelSheetChoice('Sheet1')
-
-                    dictKeyList = list(returnDict.keys())
-                    # print(dictKeyList)
-                    
-                    #db에 생산이력 없을 경우
-                    if dictKeyList == []:
-                        i = 0
-                        x = 0
-                        PXM.ExcelSheetChoice('전수검사기 검사 실적')
-                            
-                        PXM.ExcelDataWrite('B1', f'▣ {PXM.lineName} {PXM.lineType} 전수검사기 검사 실적')
-                        PXM.ExcelDataWrite('J3', f'{PXM.Today}')
-                        PXM.ExcelDataWrite('B8', f'{PXM.lineName}\n{PXM.lineType}')
-                        PXM.ExcelDataWrite('C8', f'{PXM.Yesterday} 08:00\n~\n{PXM.Today} 07:59')
-                        PXM.ExcelDataWrite('D8' if i == 0 else 'D'+str(8+i), '생산 없음')
-                        PXM.ExcelDataWrite('E8' if i == 0 else 'E'+str(8+i), 0)
-                        PXM.ExcelDataWrite('F8' if i == 0 else 'F'+str(8+i), 0)
-                        PXM.ExcelDataWrite('G8' if i == 0 else 'G'+str(8+i), 0)
-                        PXM.ExcelDataWrite('H8' if i == 0 else 'H'+str(8+i), 0)
-                        PXM.ExcelDataWrite('I8' if i == 0 else 'I'+str(8+i), 0)
-
-                        PXM.ExcelDataWrite('B19', f'{PXM.lineName}\n{PXM.lineType}')
-                        PXM.ExcelDataWrite('C19', f'{PXM.Yesterday} 08:00\n~\n{PXM.Today} 07:59')
-                        PXM.ExcelDataWrite('D19' if i == 0 else 'D'+str(19+i), '생산 없음')
-                        PXM.ExcelDataWrite('E19' if i == 0 else 'E'+str(19+i), 0)
-                        PXM.ExcelDataWrite('F19' if i == 0 else 'F'+str(19+i), 0)
-                        PXM.ExcelDataWrite('G19' if i == 0 else 'G'+str(19+i), 0)
-                        PXM.ExcelDataWrite('H19' if i == 0 else 'H'+str(19+i), 0)
-                        PXM.ExcelDataWrite('I19' if i == 0 else 'I'+str(19+i), 0)
-                        PXM.ExcelSheetChoice('전수검사기 불량 검사 상세 실적')
-                        
-                        PXM.ExcelDataWrite('B1', f'▣ {PXM.lineName} {PXM.lineType} 전수검사기 불량 검사 상세 실적')
-                        PXM.ExcelDataWrite('B8', f'{PXM.lineName}\n{PXM.lineType}')
-                        PXM.ExcelDataWrite('G3', f'{PXM.Today}')
-                        pass
-                    #db에 생산이력 존재할 경우
-                    else:
-                        UpdateLineCount = 0
-                        IndexUpdate = 0
-                        for i in range(len(dictKeyList)):
-                            IndexUpdate += UpdateLineCount
-                            PXM.ExcelSheetChoice('전수검사기 검사 실적')
-                            
-                            PXM.ExcelDataWrite('B1', f'▣ {PXM.lineName} {PXM.lineType} 전수검사기 검사 실적')
-                            PXM.ExcelDataWrite('J3', f'{PXM.Today}')
-                            PXM.ExcelDataWrite('B8', f'{PXM.lineName}\n{PXM.lineType}')
-                            PXM.ExcelDataWrite('C8', f'{PXM.Yesterday} 08:00\n~\n{PXM.Today} 07:59')
-                            PXM.ExcelDataWrite('D8' if i == 0 else 'D'+str(8+i), dictKeyList[i])
-                            PXM.ExcelDataWrite('E8' if i == 0 else 'E'+str(8+i), returnDict[dictKeyList[i]]['TotalCount'])
-                            PXM.ExcelDataWrite('F8' if i == 0 else 'F'+str(8+i), returnDict[dictKeyList[i]]['OKCount'])
-                            PXM.ExcelDataWrite('G8' if i == 0 else 'G'+str(8+i), returnDict[dictKeyList[i]]['NGCount']+returnDict[dictKeyList[i]]['CriticalNGCount'])
-                            PXM.ExcelDataWrite('H8' if i == 0 else 'H'+str(8+i), returnDict[dictKeyList[i]]['NGCount'])
-                            PXM.ExcelDataWrite('I8' if i == 0 else 'I'+str(8+i), returnDict[dictKeyList[i]]['CriticalNGCount'])
-
-                            PXM.ExcelDataWrite('B19', f'{PXM.lineName}\n{PXM.lineType}')
-                            PXM.ExcelDataWrite('C19', f'{PXM.Yesterday} 08:00\n~\n{PXM.Today} 07:59')
-                            PXM.ExcelDataWrite('D19' if i == 0 else 'D'+str(19+i), dictKeyList[i])
-                            PXM.ExcelDataWrite('E19' if i == 0 else 'E'+str(19+i), returnDict[dictKeyList[i]]['CriticalNGCount'])
-                            PXM.ExcelDataWrite('F19' if i == 0 else 'F'+str(19+i), returnDict[dictKeyList[i]]['CriticalNGPartCount'][0])
-                            PXM.ExcelDataWrite('G19' if i == 0 else 'G'+str(19+i), returnDict[dictKeyList[i]]['CriticalNGPartCount'][1])
-                            PXM.ExcelDataWrite('H19' if i == 0 else 'H'+str(19+i), returnDict[dictKeyList[i]]['CriticalNGPartCount'][2])
-                            PXM.ExcelDataWrite('I19' if i == 0 else 'I'+str(19+i), returnDict[dictKeyList[i]]['CriticalNGPartCount'][3])
-                            PXM.ExcelSheetChoice('전수검사기 불량 검사 상세 실적') 
-                            
-                            PXM.ExcelDataWrite('B1', f'▣ {PXM.lineName} {PXM.lineType} 전수검사기 불량 검사 상세 실적')
-                            PXM.ExcelDataWrite('B8', f'{PXM.lineName}\n{PXM.lineType}')
-                            PXM.ExcelDataWrite('G3', f'{PXM.Today}')
-                            
-                            passCount = 0
-                            for IDX, x in enumerate(range(len(returnDict[dictKeyList[i]]['Product']))):
-                                try:
-                                    if 'None' in  returnDict[dictKeyList[i]]['Product'][x][2]:
-                                        passCount +=1
-                                        continue
-                                except:
-                                    passCount +=1
-                                    continue
-                                check_X = x-passCount
-                                # print(returnDict[dictKeyList[i]]['Product'][x][2], type(returnDict[dictKeyList[i]]['Product'][x][2]))
-                                PXM.ExcelDataWrite('C'+str(check_X+8+IndexUpdate), returnDict[dictKeyList[i]]['Product'][x][0])
-                                PXM.ExcelDataWrite('E'+str(check_X+8+IndexUpdate), returnDict[dictKeyList[i]]['Product'][x][1])
-                                PXM.ExcelDataWrite('F'+str(check_X+8+IndexUpdate), returnDict[dictKeyList[i]]['Product'][x][2])
-                                # print(returnDict[dictKeyList[i]]['Product'][check_X][2])
-                                if "S/F 누락" in returnDict[dictKeyList[i]]['Product'][x][2] or "롤러 누락" in returnDict[dictKeyList[i]]['Product'][x][2] or "각인 누락" in returnDict[dictKeyList[i]]['Product'][x][2] or "식별각인 누락" in returnDict[dictKeyList[i]]['Product'][x][2] or '케이지 깨짐' in returnDict[dictKeyList[i]]['Product'][x][2]:
-                                    font = Font(name='굴림', color = 'ff0000')
-                                    PXM.Worksheet['F'+str(check_X+8+IndexUpdate)].font = font
-                                    PXM.ExcelDataWrite('D'+str(check_X+8+IndexUpdate), '중대 불량')
-                                    PXM.Worksheet['D'+str(check_X+8+IndexUpdate)].font = font
-                                else:
-                                    PXM.ExcelDataWrite('D'+str(check_X+8+IndexUpdate), '일반 불량')
-                                    pass
-                                UpdateLineCount += 1
-
-                    PXM.ExcelFileWrite()
-                    
-                    # 메일 전송 프로세스
-                    self.send_mail_success = Email.mailSendProcess() # True : 성공, False : 실패
-                    if self.send_mail_success == True:
-                        self.send_mail_success = 'yet'
-                        print("전송 완료")
-                        self.remove_xlsx()
-                    elif self.send_mail_success == False :
-                        print("전송 실패")
-
-                # 재시도 반복되면서 08시 작업 미실시되는 현상으로 주석 처리
-                # if self.send_mail_success == False :
-                #     time.sleep(600) # 10분 마다 재시도
-                #     print('메일 전송 재시도')
-                #     logger.info(f"mail send retry")
-                #     self.send_mail_success = Email.mailSendProcess()
-                #     if self.send_mail_success == True:
-                #         self.send_mail_success = 'yet'
-                #         print("전송 완료")
-                #         self.remove_xlsx()
-                #     elif self.send_mail_success == False :
-                #         print("전송 실패")
-
-            except Exception as ex:
-                print(ex)
-                logger.info(f"Warning : 자동 카운트 리셋 메일 송부 에러 - {ex} \n {traceback.format_exc()}")
-
-    # 5일전 엑셀 삭제
-    def remove_xlsx(self) :
-        try:
-            os.remove(f'C:/Users/sinplat/Desktop/{my_folder}/{PXM.five_days_ago_file_name}).xlsx')
-            print('엑셀 삭제 완료')
-            logger.info('엑셀 삭제 완료')
-        except :
-            print(f'엑셀 삭제 실패 {traceback.format_exc()}')
-            logger.info(f'엑셀 삭제 실패 {traceback.format_exc()}')
-
-class OpenpyxlModul():
-    def __init__(self):
-        import datetime
-        self.lineName = 'SS#8'
-        self.lineType = 'CONE'
-
-        d_today = datetime.date.today()
-        self.Today = d_today.strftime('%Y-%m-%d')
-        self.Yesterday = d_today - datetime.timedelta(1)
-        self.five_days_ago = d_today - datetime.timedelta(5)
-
-        # self.Today = '2022-10-10'
-        # self.Yesterday = '2022-10-09'
-        self.Workbook = None    #로딩 및 저장에 쓰이는 최종 데이터
-        self.Worksheet = None   #작업이 진행될 워크시트
-        self.LoadData = None
-        self.writeExcelFilename = ''
-
-        self.xlsx_file_name = '' # 일일현황 파일 이름
-
-    def ExcelDataLoad(self, Path):
-        try:
-            #"C:\\Users\\ParkJH\\Desktop\\엑셀프로젝트\\test.xlsx"
-            self.Workbook = load_workbook(Path, data_only=True)
-        except:
-            print(traceback.format_exc())
-
-    def CreateSheet(self, SheetName):
-        try:
-            self.Workbook.create_sheet(SheetName)
-        except:
-            print(traceback.format_exc())
-
-    def ExcelSheetChoice(self, SheetName):
-        try:
-            self.Worksheet = self.Workbook[SheetName]
-        except:
-            print(traceback.format_exc())
-
-    def ExcelDataRecv(self, rowIndex):
-        try:
-            returnData = self.Worksheet[rowIndex].value
-            return returnData        
-        except:
-            print(traceback.format_exc())
-
-    def ExcelDataWrite(self, rowIndex, WriteData):
-        try:
-            self.Worksheet[rowIndex] = WriteData
-        except:
-            print(traceback.format_exc())
-
-    def ExcelAllValueLoad(self):
-        for index_Y, row in enumerate(self.Worksheet.values):
-            for index_X, value in enumerate(row):
-                print(f'{index_X}, {index_Y} : {value}')
-
-    def ExcelFileWrite(self):
-        try:
-            self.xlsx_file_name = f'{self.lineName} 라인 {self.lineType} 전수검사기 검사 실적({self.Today}).xlsx'
-            self.five_days_ago_file_name = f'{self.lineName} 라인 {self.lineType} 전수검사기 검사 실적({self.five_days_ago}).xlsx'
-            self.Workbook.save(filename = self.xlsx_file_name)
-            self.writeExcelFilename = self.xlsx_file_name
-        except:
-            print(traceback.format_exc())
-
-class DB_DataRequest():
-    def __init__(self):
-        import datetime
-        self.host = 'localhost' #"localhost"
-        self.user = 'root' #"root"
-        self.password = 'yous7051' #"yous7051"
-        self.dbname = 'bearingart' #"bearingart"
-        self.CriticalIndex = [1, 2, 3, 4, 5] #[8,9,10,11,12]
-        self.badTypeName = {
-                            0: "데이터 부족", 
-                            1: "S/F 누락", 
-                            2: "롤러 누락", 
-                            3: "각인 누락", 
-                            4: "식별각인 누락",
-                            5: '케이지 깨짐',
-                            6: "이종 혼입",
-                            7: "소단면 불량", 
-                            8: "대단면 불량", 
-                            9: "소단 내경 불량", 
-                            10: "소단 외경 불량", 
-                            11: "대단 외경 불량", 
-                            12: "대단 내경 불량", 
-                            13: "외경 불량",
-                            }
-
-    def readSql(self, StartDate=None, EndDate=None,):
-        db = pymysql.connect(host=self.host, user=self.user, password=self.password, db=self.dbname, charset="utf8")
-        curs = db.cursor()
-        sql = "select * from data"
-        addvalue = False
-
-        if StartDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "InputTime >= '{} 08:00:00'".format(StartDate)
-
-        if EndDate is not None:
-            add = " WHERE " if addvalue is False else " AND "
-            addvalue = True
-
-            sql = sql + add + "InputTime <= '{} 08:00:00'".format(EndDate)
-
-        sql = sql# + " order by LotNum DESC LIMIT 0,10000"
-
-        print(sql)
-
-        curs.execute(sql)
-        rows = curs.fetchall()
-
-        # self.writeExcel(rows, text, dirName=dirs)
-        db.close()
-
-        # print(rows)
-
-        return rows
-
-    def DB_DataLoad_Refine(self, TotalCount = None):
-        DataDict = {}
-
-        print(PXM.Today, PXM.Yesterday)
-        
-        returnData = DB.readSql(PXM.Yesterday, PXM.Today)
-
-        # print(type(returnData))
-
-        for i in range(len(returnData)):
-            # print('----------------------------------------------------------------------')
-            checkValue = [0,0]  #일반불량, 중대불량 체크
-            keyCheck = ''
-            UpdateValue = [None, None, None]
-            for x in range(len(returnData[i])):
-                # print(x, returnData[i][x])
-                if x == 1:  #형번
-                    if returnData[i][x] in DataDict:
-                        keyCheck = returnData[i][x]
-                        UpdateValue[0] = returnData[i][x]
-                        pass
-                    else:
-                        # Productionmodel.append(returnData[i][x])
-                        DataDict[returnData[i][x]] = {'TotalCount' : 0, 'OKCount' : 0, 'NGCount' : 0, 'CriticalNGCount' : 0, 'CriticalNGPartCount' : [0,0,0,0], 'Product' : []}
-                        keyCheck = returnData[i][x]
-                        UpdateValue[0] = returnData[i][x]
-                if 2 <= x <= 7: #불량 유형
-                    if '1' in returnData[i][x]:
-                        Index = returnData[i][x].index('1')
-                        # print(f'{Index} - 불량 체크 ({self.badTypeName[Index]})')
-                        if Index in self.CriticalIndex:
-                            checkValue[1] += 1
-                            if self.badTypeName[Index] == 'S/F 누락':
-                                DataDict[keyCheck]['CriticalNGPartCount'][0] += 1
-                            elif self.badTypeName[Index] == '롤러 누락':
-                                DataDict[keyCheck]['CriticalNGPartCount'][1] += 1
-                            elif self.badTypeName[Index] == '각인 누락' or self.badTypeName[Index] == '식별각인 누락':
-                                DataDict[keyCheck]['CriticalNGPartCount'][2] += 1
-                            elif self.badTypeName[Index] == '케이지 깨짐':
-                                DataDict[keyCheck]['CriticalNGPartCount'][3] += 1
-
-                        else:
-                            checkValue[0] += 1
-                        if UpdateValue[2] == None:
-                            UpdateValue[2] = self.badTypeName[Index]
-                        else:
-                            UpdateValue[2] += f', {self.badTypeName[Index]}'
-                if x == 14: #업데이트 시간
-                    UpdateValue[1] = returnData[i][x]
-
-            if checkValue[1] != 0:
-                DataDict[keyCheck]['CriticalNGCount'] += 1
-            elif checkValue[0] != 0:
-                DataDict[keyCheck]['NGCount'] += 1
-            else:
-                DataDict[keyCheck]['OKCount'] += 1
-            DataDict[keyCheck]['TotalCount'] += 1
-            DataDict[keyCheck]['Product'].append(UpdateValue)
-
-        # print(DataDict)
-
-        return DataDict
-
-class EmailProcessClass():
-    def __init__(self):
-        import datetime
-        self.SendingListUp()
-        pass
-
-    def SendingListUp(self):
-        with open("Mail_Sending_List.json", "r", encoding='UTF8') as st_json:
-            SendingList = json.load(st_json)
-        self.Mymail = SendingList["MY"][0]
-        self.Tomail = SendingList["MAIN"][0]
-        joined_str = ""
-        for v in SendingList["SUB"]:
-            # 문자열 변수에 값이 있을 경우
-            if(len(joined_str) > 0):
-                # 콤마를 추가한다
-                joined_str += ","
-            joined_str += str(v)
-        self.CCmail = joined_str
-
-        #db load data
-        DB.host = SendingList["DBHOST"]
-        DB.user = SendingList["DBUSER"]
-        DB.password = SendingList["DBPASSWORD"]
-        DB.dbname = SendingList["DBNAME"]
-        DB.CriticalIndex = SendingList["CRITICALINDEX"]
-        DB.badTypeName = SendingList["BADTYPENAME"]
-        DB.badTypeName = {int(k):str(v) for k,v in DB.badTypeName.items()}
-
-        # openpyxl module load data
-        PXM.lineName = SendingList["LINENAME"]
-        PXM.lineType = SendingList["LINETYPE"]
-
-        print(self.Mymail, self.Tomail, self.CCmail)
-        print(DB.host,DB.user,DB.password,DB.dbname,DB.CriticalIndex,DB.badTypeName,DB.badTypeName)
-        print(PXM.lineName,PXM.lineType)
-
-    def mailSendProcess(self):
-        import smtplib
-        from email.mime.multipart import MIMEMultipart # 메일의 Data 영역의 메시지를 만드는 모듈 
-        from email.mime.text import MIMEText # 메일의 본문 내용을 만드는 모듈
-        from email.mime.application import MIMEApplication # 메일의 첨부 파일을 base64 형식으로 변환
-        from email.mime.image import MIMEImage # 메일의 이미지 파일을 base64 형식으로 변환
-
-        # smpt 서버와 연결
-        try : 
-            gmail_smtp = "smtp.gmail.com"#"smtp.mailplug.co.kr"  #gmail smtp 주소
-            gmail_port = 465  #gmail smtp 포트번호
-            smpt = smtplib.SMTP_SSL(gmail_smtp, gmail_port)
-            print(smpt)
-
-            # 로그인
-            my_id = self.Mymail #"khaki798@sinplat.com"
-            my_password = "iwppyeqlvjumzaoy"
-            smpt.login(my_id, my_password)
-
-            # 메일 기본 정보 설정
-            msg = MIMEMultipart()
-            msg["Subject"] = PXM.writeExcelFilename#f"{PXM.lineName} {PXM.lineType} line Days Report"
-            msg["From"] = self.Mymail#"khaki798@sinplat.com"  #송신자
-            msg["To"] = self.Tomail  #수신자
-            msg['Cc'] = self.CCmail
-
-            # 메일 내용 쓰기
-            content = f""
-            content_part = MIMEText(content, "plain")
-            msg.attach(content_part)
-
-            # 데이터 파일 첨부하기
-            file_name = PXM.writeExcelFilename#"write.xlsx"
-            with open(file_name, 'rb') as excel_file : 
-                attachment = MIMEApplication( excel_file.read() )
-                #첨부파일의 정보를 헤더로 추가
-                attachment.add_header('Content-Disposition','attachment', filename=file_name) 
-                msg.attach(attachment)
-            
-            sender = msg['From']
-            receiver = msg['To'].split(",")
-            if msg['Cc'] is not None:
-                receiver += msg['Cc'].split(",")
-            if msg['Bcc'] is not None:
-                receiver += msg['Bcc'].split(",")
-
-            # 메일 보내고 서버 끄기
-            smpt.sendmail(sender, receiver, msg.as_string())  
-            smpt.quit()
-            return True
-
-        except :
-            print(f"Warning : 메일 송부 에러 - {traceback.format_exc()}")
-            logger.info(f"Warning : 메일 송부 에러 - {traceback.format_exc()}")
-            return False
-
-
-# ★ 불량 확인 클래스
-class NgcheckFrame(tk.Frame):
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.master = master
-        # 배경 이미지
-        self.bg = ImageTk.PhotoImage(file=f"bg/ngcheck_bg.png")
-
-        self.part_txt = [None] * 2
-        self.part_txt[0] = ImageTk.PhotoImage(file=f"bg/part_txt0.png")
-        self.part_txt[1] = ImageTk.PhotoImage(file=f"bg/part_txt1.png")
-
-        self.choose_part_txt = [None] * 2
-        self.choose_part_txt[0] = ImageTk.PhotoImage(file=f"bg/choose_part0.png")
-        self.choose_part_txt[1] = ImageTk.PhotoImage(file=f"bg/choose_part1.png")
-
-        self.ok_image = ''
-        self.ng_image = ''
-        
-        self.cam_num = ''  # 101 ~ 105, 111 ~ 116
-        self.part = ''
-
-        # 카메라별 검사 파트 정보
-        image_files = {
-            "101": { # ●
-                "filepath": "bg/part/101_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (585, 898), "y_range": (132, 477)},
-                    {"name": "2", "x_range": (1019, 1341), "y_range": (573, 923)}
-                ]
-            },
-            "102": { # ●
-                "filepath": "bg/part/102_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (841, 1069), "y_range": (219, 471)}
-                ]
-            },
-            "103": { # ●
-                "filepath": "bg/part/103_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (855, 1076), "y_range": (404, 663)}
-                ]
-            },
-            "104": { # ●
-                "filepath": "bg/part/104_.jpg",
-                "parts": [
-                    {"name": "0", "x_range": (1182, 1430), "y_range": (70, 168)},
-                    {"name": "1", "x_range": (594, 867), "y_range": (143, 448)},
-                    {"name": "2", "x_range": (1055, 1331), "y_range": (603, 913)},
-                    {"name": "3", "x_range": (1163, 1260), "y_range": (221, 349)}
-                ]
-            },
-            "105": { # ●
-                "filepath": "bg/part/105_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (832, 1099), "y_range": (602, 898)}
-                ]
-            },
-
-            "111": { # ●
-                "filepath": "bg/part/111_.jpg",
-                "parts": [
-                    {"name": "0", "x_range": (1186, 1446), "y_range": (63, 164)},
-                    {"name": "1", "x_range": (988, 1302), "y_range": (158, 514)},
-                    {"name": "2", "x_range": (618, 931), "y_range": (534, 883)},
-                    {"name": "3", "x_range": (1030, 1343), "y_range": (566, 914)},
-                    {"name": "4", "x_range": (688, 798), "y_range": (223, 368)}
-                ]
-            },
-            "112": { # ●
-                "filepath": "bg/part/112_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (846, 1066), "y_range": (154, 422)}
-                ]
-            },
-            "113": { # ●
-                "filepath": "bg/part/113_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (631, 1314), "y_range": (400, 864)}
-                ]
-            },
-            "114": { # ●
-                "filepath": "bg/part/114_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (1001, 1271), "y_range": (198, 505)},
-                    {"name": "2", "x_range": (656, 923), "y_range": (552, 853)},
-                    {"name": "3", "x_range": (1035, 1293), "y_range": (570, 866)},
-                    {"name": "4", "x_range": (715, 869), "y_range": (247, 441)}
-                ]
-            },
-            "115": { # ●
-                "filepath": "bg/part/115_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (745, 1198), "y_range": (615, 896)},
-                    {"name": "2", "x_range": (600, 1340), "y_range": (204, 608)}
-                ]
-            },
-            "116": { # ●
-                "filepath": "bg/part/116_.jpg",
-                "parts": [
-                    {"name": "1", "x_range": (859, 1081), "y_range": (194, 462)}
-                ]
-            }
-        }
-
-        self.images = {}
-
-        for key, data in image_files.items():
-            self.images[key] = {
-                "image": ImageTk.PhotoImage(file=data["filepath"]),
-                "parts": data["parts"]
-            }
-
-        # 선택된 카메라, 파트에 대한 이미지 정보
-        self.image_data = {
-            'OK': {'filepaths': [], 'current_index': 0},
-            'NG': {'filepaths': [], 'current_index': 0}
-        }
-
-        self.client_txt_mapping = {
-            '111': '소단면 & 각인',
-            '112': '내경',
-            '113': '롤러 & 케이지',
-            '114': '대단면 & 롤러단면',
-            '115': '대단면 & 케이지 & 면취',
-            '116': '내경',
-            '101': '소단면',
-            '102': '궤도',
-            '103': '외경',
-            '104': '대단면 & 각인',
-            '105': '면취 & 외경'
-        }
-
-        self.label_txt_mapping = {
-            'CRACK': '케이지 깨짐',
-            'ROLLER': '롤러 누락',
-            'SHORT_NG': '롤러 길이 미달',
-            'NG': '일반 불량',
-            '1_MISS': 'SF누락',
-            'MIX': '이종 혼입',
-            'R_NG': '롤러 단면 이상',
-            'D_NG': '대단 갈림',
-            'ED' : '각인 불량'
-        }
-
-        self.part_click = False
-
-        self.master.attributes("-fullscreen", True)
-        self.master.bind(
-            "<F11>", lambda event: self.master.attributes("-fullscreen", not self.master.attributes("-fullscreen")),
-        )
-        self.master.bind("<Escape>", lambda event: self.master.attributes("-fullscreen", False))
-        self.create_widgets()
-
-    def create_widgets(self):
-        self.grid(row=0, column=0)
-        self.ng_canvas = tk.Canvas(self, width=1920, height=1080)
-        self.BG = self.ng_canvas.create_image(0, 0, image=self.bg, anchor="nw")
-
-        self.ok_place = self.ng_canvas.create_image(86, 160, anchor="nw", state = 'normal')
-        self.ng_place = self.ng_canvas.create_image(1035, 160, anchor="nw", state = 'normal') 
-
-        # 팝업창 1
-        self.popup_place1 = self.ng_canvas.create_image(21, 14, anchor="nw", state="hidden")
-        # 팝업창 2
-        self.popup_place2 = self.ng_canvas.create_image(50, 300, anchor="nw", state="hidden")
-
-        self.part_image_place = self.ng_canvas.create_image(960, 540, anchor="center", state = 'hidden') 
-
-        self.part_name = self.ng_canvas.create_text(1286, 64, text='', font=("gothic", 15, "bold"), fill="white", anchor="center")
-        self.ng_name = self.ng_canvas.create_text(1733, 64, text='', font=("gothic", 15, "bold"), fill="white", anchor="center")
-
-        self.ng_canvas.bind("<Button-1>", self.main_btn)
-        self.ng_canvas.pack()
-
-    def main_btn(self, event):
-        x = event.x
-        y = event.y
-
-        if 1685 < x < 1685 + 194 and 958 < y < 958 + 85:
-            self.ng_canvas.itemconfig(self.part_image_place, state = 'hidden')
-            main_frame.tkraise()
-
-        # 검사 파트 선택 클릭
-        if 30 < x < 30 + 240 and 23 < y < 23 + 78:
-            self.part_click = True
-            if self.part_click == True :
-                print('파트 선택 : ', self.cam_num)
-                self.show_part_image()
-            
-        if self.part_click == False :
-            if 29 < x < 29 + 59 and 512 < y < 512 + 56:
-                print('양품 이미지 이전')
-                self.show_previous_image('OK')
-            if 880 < x < 880 + 59 and 512 < y < 512 + 56:
-                print('양품 이미지 다음')
-                self.show_next_image('OK')
-
-            if 978 < x < 978 + 59 and 512 < y < 512 + 56:
-                print('불량 이미지 이전')
-                self.show_previous_image('NG')
-            if 1828 < x < 1828 + 59 and 512 < y < 512 + 56:
-                print('불량 이미지 다음')
-                self.show_next_image('NG')
-
-        if self.part_click == True :
-            for part in self.images[self.cam_num]["parts"]:
-                x_min, x_max = part["x_range"]
-                y_min, y_max = part["y_range"]
-                if x_min < x < x_max and y_min < y < y_max:
-                    print('PART 선택 : ', part["name"])  # 해당 파트의 이름 출력
-                    self.part = part["name"]
-                    self.image_data = {
-                        'OK': {'filepaths': [], 'current_index': 0},
-                        'NG': {'filepaths': [], 'current_index': 0}
-                    }
-                    NF.show_result_image('OK', self.cam_num)
-                    NF.show_result_image('NG', self.cam_num)
-
-                    self.ng_canvas.itemconfig(self.part_image_place, state = 'hidden')
-                    self.ng_canvas.itemconfig(self.part_name, state = 'normal')
-                    self.ng_canvas.itemconfig(self.ng_name, state = 'normal')
-                    self.part_click = False
-                    break
-
-    # 파트 이미지 출력
-    def show_part_image(self):
-        self.ng_canvas.itemconfig(self.part_name, state = 'hidden')
-        self.ng_canvas.itemconfig(self.ng_name, state = 'hidden')
-        self.ng_canvas.itemconfig(self.ok_place, image = '', state = 'hidden')
-        self.ng_canvas.itemconfig(self.ng_place, image = '', state = 'hidden')
-        self.ng_canvas.itemconfig(self.part_image_place, image = self.images[self.cam_num]['image'], state = 'normal')
-
-    # 클라이언트에서 받은 이미지 저장
-    def save_new_image_and_remove_oldest(self, result, img, client_num, part_num, ngname):  # result, decimg, ok_client_num, ok_part_num, okname
-        save_path = f'{result}/{client_num}/{part_num}'
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        img_name = f"{timestamp}_{ngname}.jpg"
-
-        # List all files in the directory
-        all_files = [os.path.join(save_path, f) for f in os.listdir(save_path) if os.path.isfile(os.path.join(save_path, f))]
-        
-        # If more than 100 images, delete the oldest
-        if len(all_files) > 100:
-            all_files.sort(key=os.path.getctime)  # Sort by creation time
-            os.remove(all_files[0])  # Remove the oldest file
-        
-        # Save the new image
-        cv2.imwrite(os.path.join(save_path, img_name), img)
-
-    # 이미지 출력
-    def show_result_image(self, result, client_num):
-        # 이미지 경로 불러오기
-        self.image_data[result]['filepaths'] = self.get_images_from_path(result, client_num)
-
-        # 확인 영역 정보 출력
-        txt = self.client_txt_mapping.get(client_num, '')
-        self.ng_canvas.itemconfig(self.part_name, text=f'{txt} 파트 {self.part}')
-
-        self.show_image_by_index(result)
-        
-    def show_image_by_index(self, result):
-        try : 
-            img = Image.open(self.image_data[result]['filepaths'][self.image_data[result]['current_index']])
-            img_resized = img.resize((794, 794))
-
-            if result == 'OK':
-                self.ok_image = ImageTk.PhotoImage(img_resized)
-                self.ng_canvas.itemconfig(self.ok_place, image=self.ok_image, state='normal')
-            else:
-                self.ng_image = ImageTk.PhotoImage(img_resized)
-                self.ng_canvas.itemconfig(self.ng_place, image=self.ng_image, state='normal')
-                label_idx = self.image_data[result]['filepaths'][self.image_data[result]['current_index']].split('\\')[1].split('_', 2)[2][:-4] # 라벨만 추출
-                label_name = self.label_txt_mapping.get(label_idx, '일반 불량')
-                self.ng_canvas.itemconfig(self.ng_name, text=f'{label_name}')
-        except:
-            pass
-
-    def change_image_index(self, result, increment=True):
-        if increment:
-            self.image_data[result]['current_index'] += 1
-            if self.image_data[result]['current_index'] >= len(self.image_data[result]['filepaths']):
-                self.image_data[result]['current_index'] = len(self.image_data[result]['filepaths']) - 1
-        else:
-            self.image_data[result]['current_index'] -= 1
-            if self.image_data[result]['current_index'] < 0:
-                self.image_data[result]['current_index'] = 0
-
-    def show_next_image(self, result):
-        self.change_image_index(result, increment=True)
-        self.show_image_by_index(result)
-
-    def show_previous_image(self, result):
-        self.change_image_index(result, increment=False)
-        self.show_image_by_index(result)
-
-    def get_images_from_path(self, result, client_num):
-        try : 
-            directory_path = f'{result}/{client_num}/{self.part}'
-            all_files = [os.path.join(directory_path, f) for f in os.listdir(directory_path) if os.path.isfile(os.path.join(directory_path, f))]
-            return [f for f in all_files if f.lower().endswith(('.jpg'))]
-        except :
-            print('리스트 없음')
-            return []
-
-    # 팝업창 gif 효과 
-    def twinkle(self, imagelist, cnt, done) :
-        if imagelist == self.part_txt :
-            if done == True :
-                self.ng_canvas.itemconfig(self.popup_place1, state="hidden")
-            elif cnt % 2 == 0 :
-                self.ng_canvas.itemconfig(self.popup_place1, image=imagelist[0], state="normal")
-            elif cnt % 2 == 1 :
-                self.ng_canvas.itemconfig(self.popup_place1, image=imagelist[1], state="normal")
-        
-        elif imagelist == self.choose_part_txt :
-            if done == True :
-                self.ng_canvas.itemconfig(self.popup_place2, state="hidden")
-            elif cnt % 2 == 0 :
-                self.ng_canvas.itemconfig(self.popup_place2, image=imagelist[0], state="normal")
-            elif cnt % 2 == 1 :
-                self.ng_canvas.itemconfig(self.popup_place2, image=imagelist[1], state="normal")
-
-    # 팝업창 스레드
-    def popup_thread(self):
-        cnt = 0
-        while 1:
-            try :
-                time.sleep(0.5)
-                cnt += 1
-                if self.part == '' :
-                    self.twinkle(self.part_txt, cnt, False)
-
-                    if self.part_click == True :
-                        self.twinkle(self.part_txt, cnt, True)
-                        self.twinkle(self.choose_part_txt, cnt, False)
-                    else : 
-                        self.twinkle(self.choose_part_txt, cnt, True)
-                else :
-                    if self.part_click == True :
-                        self.twinkle(self.choose_part_txt, cnt, False)
-                    else : 
-                        self.twinkle(self.part_txt, cnt, True)
-                        self.twinkle(self.choose_part_txt, cnt, True)
-            
-                # 초기화
-                if cnt == 20 :
-                    cnt = 0
-            except :
-                pass
-        
-
-############################################################################################################################################
-
-
-def on_closing():
-    result = messagebox.askyesno("Questions", "Do you want to exit the program?")
-    if result == True:
-        print("프로그램 종료 확인")
-        WriteData = [main_frame.total_count, main_frame.ok_count, main_frame.ng_count]
-        try:
-            try:
-                if not (os.path.isdir(f"CountSave")):
-                    os.makedirs(os.path.join(f"CountSave"))
-            except OSError as e:
-                pass
-
-            os.remove("CountSave/Count.pickle")
-
-            with open(f"CountSave/Count.pickle", "wb") as file:
-                pickle.dump(WriteData, file)
-        except Exception as ex:
-            logger.info(f"Warning : 피클파일 저장 에러 - {ex} \n {traceback.format_exc()}")
-        CountDataSave()
-        # STH.SendDataTrim("W", "D3000", "0")
-        # STH.SendDataTrim("W", "D3001", "0")
-        # STH.SendDataTrim("W", "D3002", "0")
-        # STH.SendDataTrim("W", "D3003", "0")
-        # STH.SendDataTrim("W", "D3006", "0")
-        # STH.SendDataTrim("W", "D3007", "0")
-        STH.ModbusSignalSend("RESET")
-        exit()
-    else:
-        print("프로그램 종료하지 아니함")
-
-
-def CountDataSave():
-    WriteData = [main_frame.total_count, main_frame.ok_count, main_frame.ng_count]
-    try:
-        try:
-            if not (os.path.isdir(f"CountSave")):
-                os.makedirs(os.path.join(f"CountSave"))
-        except OSError as e:
-            pass
-
-        with open(f"CountSave/Count.pickle", "wb") as file:
-            pickle.dump(WriteData, file)
-    except Exception as ex:
-        logger.info(f"Warning : 피클파일 저장 에러 - {ex} \n {traceback.format_exc()}")
-
-
-def loadCount():
-    print("초기 검사 수량 데이터 로드")
-    try:
-        # self.vision_value = []
-        with open(f"CountSave/Count.pickle", "rb") as file:
-            data = pickle.load(file)
-
-        loadData = data.copy()
-        main_frame.total_count = loadData[0]
-        main_frame.ok_count = loadData[1]
-        main_frame.ng_count = loadData[2]
-
-        main_frame.main_canvas.itemconfig(main_frame.totalText, text=main_frame.total_count)
-        main_frame.main_canvas.itemconfig(main_frame.okText, text=main_frame.ok_count)
-        main_frame.main_canvas.itemconfig(main_frame.ngText, text=main_frame.ng_count)
-
-        print("피클 파일 로딩 완료")
-    except:
-        logger.info(f"피클파일이 존재하지 않습니다. {traceback.format_exc()}")
-        print("피클파일이 존재하지 않습니다.")
+	def __init__(self, master=None):
+		super().__init__(master)
+		self.master = master
+
+		self.bg_image = ImageTk.PhotoImage(file=f"bg/{line_type}/history_bg.png")
+
+		self.master.attributes("-fullscreen", True)
+		self.master.bind("<F11>", lambda event: self.master.attributes("-fullscreen", not self.master.attributes("-fullscreen")))
+		self.master.bind("<Escape>", lambda event: self.master.attributes("-fullscreen", False))
+		
+		self.create_widgets()
+		
+	def create_widgets(self):
+		self.grid(row=0, column=0)
+		self.history_canvas = tk.Canvas(self, width=1920, height=1080)
+		self.BG = self.history_canvas.create_image(0, 0, image=self.bg_image, anchor="nw")
+
+		self.font = ('Malgun Gothic', 14, 'bold')
+		self.result_log_font = ('Malgun Gothic', 10)
+
+		# 모델 선택 콤보박스
+		self.model_combobox = tk.ttk.Combobox(self.history_canvas, font=('Malgun Gothic', 20, 'bold'), state='readonly', width=15)
+		self.model_combobox.place(x=1646, y=164, anchor="center")
+		
+		# 모델 목록 로드
+		self.load_model_list()
+		
+		# 모델 선택 이벤트 바인딩
+		self.model_combobox.bind('<<ComboboxSelected>>', self.on_model_selected)
+
+		# 시작 날짜 선택
+		self.start_date_text = self.history_canvas.create_text(710, 986, text="시작 날짜:", font=self.font, fill='white', anchor='nw')
+	
+		self.start_date_entry = tk.Entry(self.history_canvas, font=self.font, width=10)
+		self.start_date_entry.place(x=710, y=1010, anchor="nw")
+		self.start_date_entry.insert(0, datetime.datetime.now().strftime("%Y-%m-%d"))
+		
+		self.start_date_button = tk.Button(self.history_canvas, text="달력", command=self.show_start_calendar,
+										  font=('Malgun Gothic', 10), bg='#4CAF50', fg='white')
+		self.start_date_button.place(x=820, y=1010)
+
+		# 종료 날짜 선택
+		self.end_date_text = self.history_canvas.create_text(870, 986, text="종료 날짜:", font=self.font, fill='white', anchor='nw')
+
+		self.end_date_entry = tk.Entry(self.history_canvas, font=self.font, width=10)
+		self.end_date_entry.place(x=870, y=1010, anchor="nw")
+		self.end_date_entry.insert(0, datetime.datetime.now().strftime("%Y-%m-%d"))
+		
+		self.end_date_button = tk.Button(self.history_canvas, text="달력", command=self.show_end_calendar,
+										font=('Malgun Gothic', 10), bg='#4CAF50', fg='white')
+		self.end_date_button.place(x=980, y=1010)
+
+		# 불량명 선택 콤보박스
+		self.defect_text = self.history_canvas.create_text(1030, 986, text="불량명:", font=self.font, fill='white', anchor='nw')
+		
+		self.defect_combobox = tk.ttk.Combobox(self.history_canvas, font=('Malgun Gothic', 13, 'bold'), state='readonly', width=15)
+		self.defect_combobox.place(x=1030, y=1010, anchor="nw")
+
+		# 검색 버튼
+		self.search_button = tk.Button(self.history_canvas, text="검색", command=self.perform_search,
+									  font=self.font, bg='#4CAF50', fg='white', width=10)
+		self.search_button.place(x=1230, y=992)
+
+		# 카운트 표시
+		self.total_count_place = self.history_canvas.create_text(1510, 319, text="0", font=self.font, fill='white', anchor='center')
+		self.ok_count_place = self.history_canvas.create_text(1656, 319, text="0", font=self.font, fill='#51fc59', anchor='center')
+		self.ng_count_place = self.history_canvas.create_text(1787, 319, text="0", font=self.font, fill='#ec5151', anchor='center')
+
+		# 중대 불량 이력 리스트
+		self.critical_ng_log = tk.Listbox(self.history_canvas, fg='white', bg='#2a5565', font=self.result_log_font, exportselection=False, selectmode='single')
+		self.critical_ng_log.place(x=1427, y=406, width=206, height=631)
+		self.critical_ng_log_scrollbar = tk.Scrollbar(self.history_canvas, bg='#2a5565', orient="vertical")
+		self.critical_ng_log_scrollbar.config(command=self.critical_ng_log.yview)
+		self.critical_ng_log_scrollbar.place(x=1618, y=406, width=15, height=631)
+		self.critical_ng_log.config(yscrollcommand=self.critical_ng_log_scrollbar.set)
+		self.critical_ng_log.bind('<<ListboxSelect>>', self.on_log_select)
+		self.critical_ng_log.bind('<Up>', self.on_log_key)
+		self.critical_ng_log.bind('<Down>', self.on_log_key)
+
+		# 일반 불량 이력 리스트
+		self.normal_ng_log = tk.Listbox(self.history_canvas, fg='white', bg='#2a5565', font=self.result_log_font, exportselection=False, selectmode='single')
+		self.normal_ng_log.place(x=1660, y=406, width=206, height=631) 
+		self.normal_ng_log_scrollbar = tk.Scrollbar(self.history_canvas, bg='#2a5565', orient="vertical")
+		self.normal_ng_log_scrollbar.config(command=self.normal_ng_log.yview)
+		self.normal_ng_log_scrollbar.place(x=1851, y=406, width=15, height=631)
+		self.normal_ng_log.config(yscrollcommand=self.normal_ng_log_scrollbar.set)
+		self.normal_ng_log.bind('<<ListboxSelect>>', self.on_log_select)
+		self.normal_ng_log.bind('<Up>', self.on_log_key)
+		self.normal_ng_log.bind('<Down>', self.on_log_key)
+
+		# 이미지 출력 공간 선언
+		self.show_image_list = [None] * client_num 
+		self.show_place_list = [None] * client_num
+		for i in range(client_num):
+			if i < 3:
+				self.show_place_list[i] = self.history_canvas.create_image(96+(i*441), 140, image='', anchor="nw", state="hidden")
+			else :
+				self.show_place_list[i] = self.history_canvas.create_image(96+((i-3)*441), 553, image='', anchor="nw", state="hidden")
+		
+		# OK, NG 표시 출력 공간 선언
+		self.ok_sign_image = ImageTk.PhotoImage(file=f"bg/common/OK.png")
+		self.ng_sign_image = ImageTk.PhotoImage(file=f"bg/common/NG.png")
+		self.ok_sign_place_list = [None] * client_num
+		self.ng_sign_place_list = [None] * client_num
+		for i in range(client_num):
+			if i < 3:
+				self.ok_sign_place_list[i] = self.history_canvas.create_image(91+(i*441), 444, image = self.ok_sign_image, anchor="nw", state="hidden")
+				self.ng_sign_place_list[i] = self.history_canvas.create_image(311+(i*441), 444, image = self.ng_sign_image, anchor="nw", state="hidden")
+			else :
+				self.ok_sign_place_list[i] = self.history_canvas.create_image(91+((i-3)*441), 857, image = self.ok_sign_image, anchor="nw", state="hidden")
+				self.ng_sign_place_list[i] = self.history_canvas.create_image(311+((i-3)*441), 857, image = self.ng_sign_image, anchor="nw", state="hidden")
+
+		self.history_canvas.bind("<Button-1>", self.main_btn)
+		self.history_canvas.pack()
+
+	def main_btn(self, event):
+		"""메인 버튼 클릭 이벤트"""
+		x = event.x
+		y = event.y
+		
+		if 1870 < x < 1912 and 11 < y < 53:
+			print("program exit")
+			MF.on_closing()
+		
+		elif 89 < x < 271 and 976 < y < 1051:
+			print("main frame open")
+			MF.tkraise()
+
+		# 관리자 모드 클릭
+		elif 459 < x < 641 and 976 < y < 1051:
+			print("admin frame open")
+			AF.tkraise()
+
+	def load_model_list(self):
+		"""모델 목록을 콤보박스에 로드"""
+		if 'model_mapping' in model_info:
+			sorted_model_names = [
+				model_info['model_mapping'][num]
+				for num in sorted(model_info['model_mapping'], key=lambda x: int(x))
+			]
+			self.model_combobox['values'] = sorted_model_names
+
+	def load_defect_list(self):
+		"""불량명 목록을 콤보박스에 로드"""
+		selected_model = self.model_combobox.get()
+		if not selected_model or selected_model not in model_info['models']:
+			self.defect_combobox['values'] = ['전체', '양품']
+			return
+		
+		# 모든 클라이언트의 불량 라벨들을 수집
+		all_defects = set()
+		for client_id in line_config['client_ids']:
+			if client_id in model_info['models'][selected_model]:
+				client_data = model_info['models'][selected_model][client_id]
+				if 'label_ng_conditions' in client_data:
+					for label, conditions in client_data['label_ng_conditions'].items():
+						if len(conditions) > 0:
+							all_defects.add(str(conditions[0]))  # 한글 이름을 문자열로 변환
+		
+		# 정렬하여 콤보박스에 설정 (모든 항목을 문자열로 변환하여 정렬)
+		defect_list = [str(defect) for defect in all_defects]
+		sorted_defects = ['전체', '양품'] + sorted(defect_list, key=str)
+		self.defect_combobox['values'] = sorted_defects
+		self.defect_combobox.set('전체')  # 기본값을 전체로 설정
+
+	def show_start_calendar(self):
+		"""시작 날짜 달력 표시"""
+		self.show_calendar(self.start_date_entry)
+
+	def show_end_calendar(self):
+		"""종료 날짜 달력 표시"""
+		self.show_calendar(self.end_date_entry)
+
+	def show_calendar(self, entry_widget):
+		"""달력 팝업 표시"""
+		def set_date():
+			entry_widget.delete(0, tk.END)
+			entry_widget.insert(0, cal.get_date())
+			top.destroy()
+		
+		top = tk.Toplevel(self)
+		top.title("날짜 선택")
+		top.geometry("400x400")
+		
+		cal = Calendar(top, selectmode='day', date_pattern='yyyy-mm-dd')
+		cal.pack(fill="both", expand=True)
+		
+		
+		tk.Button(top, width=20, text="선택", font=('Malgun Gothic', 14), fg='black', command=set_date).pack(pady=10)
+
+	def perform_search(self):
+		"""검색 실행"""
+		# 선택된 모델 확인
+		selected_model = self.model_combobox.get()
+		if not selected_model:
+			messagebox.showwarning("경고", "모델을 선택해주세요.")
+			return
+		
+		# 날짜 형식 검증
+		start_date = self.start_date_entry.get().strip()
+		end_date = self.end_date_entry.get().strip()
+		
+		if not start_date or not end_date:
+			messagebox.showwarning("경고", "시작 날짜와 종료 날짜를 입력해주세요.")
+			return
+		
+		# 날짜 형식 검증
+		try:
+			start_datetime = datetime.datetime.strptime(start_date + " 00:00:00", "%Y-%m-%d %H:%M:%S")
+			end_datetime = datetime.datetime.strptime(end_date + " 23:59:59", "%Y-%m-%d %H:%M:%S")
+		except ValueError:
+			messagebox.showerror("오류", "날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)")
+			return
+
+		if start_datetime > end_datetime:
+			messagebox.showerror("오류", "시작 날짜가 종료 날짜보다 늦을 수 없습니다.")
+			return
+
+		# 선택된 불량명 확인 (선택하지 않으면 모든 데이터 표시)
+		selected_defect = self.defect_combobox.get()
+
+		# 검색 실행
+		self.search_results(selected_model, start_datetime, end_datetime, selected_defect)
+
+	def search_results(self, model_name, start_datetime, end_datetime, defect_name):
+		"""검색 결과 조회 및 표시"""
+		try:
+			# DB에서 날짜 범위와 모델명으로 검색
+			critical_results = DB.read_result_by_date_range('critical_results', start_datetime, end_datetime, model_name)
+			normal_results = DB.read_result_by_date_range('normal_results', start_datetime, end_datetime, model_name)
+			
+			# 선택된 불량명에 해당하는 라벨 찾기
+			target_labels = []
+			if defect_name and defect_name not in ['전체', '양품']:  # 특정 불량명이 선택된 경우
+				for client_id in line_config['client_ids']:
+					if client_id in model_info['models'][model_name]:
+						client_data = model_info['models'][model_name][client_id]
+						if 'label_ng_conditions' in client_data:
+							for label, conditions in client_data['label_ng_conditions'].items():
+								if len(conditions) > 0 and conditions[0] == defect_name:
+									target_labels.append(label)
+			
+			# 결과 필터링 및 카운트
+			total_count = 0
+			ok_count = 0
+			ng_count = 0
+			
+			critical_filtered = []
+			normal_filtered = []
+			
+			# 중대 불량 결과 필터링
+			for row in critical_results:
+				should_include = False
+				all_ok = True
+				
+				# 각 클라이언트의 결과 확인
+				for client_id in line_config['client_ids']:
+					result_column = f"{client_id}_result"
+					if result_column in row and row[result_column]:
+						result_value = str(row[result_column]).upper()
+						if result_value == 'NONE' or 'ERROR' in result_value:
+							all_ok = False
+						elif ':' in result_value:
+							part_name, label = result_value.split(':', 1)
+							if 'OK' not in label:
+								all_ok = False
+				
+				# 필터링 조건에 따른 포함 여부 결정
+				if defect_name == '전체':
+					should_include = True
+				elif defect_name == '양품':
+					should_include = all_ok
+				else:  # 특정 불량명
+					# 해당 불량이 있는지 확인
+					for client_id in line_config['client_ids']:
+						result_column = f"{client_id}_result"
+						if result_column in row and row[result_column]:
+							result_value = str(row[result_column]).upper()
+							if result_value != 'NONE' and ':' in result_value:
+								part_name, label = result_value.split(':', 1)
+								if label in target_labels:
+									should_include = True
+									break
+				
+				# 카운트 및 필터링
+				if should_include:
+					critical_filtered.append(row)
+					if all_ok:
+						ok_count += 1
+					else:
+						ng_count += 1
+					total_count += 1
+			
+			# 일반 불량 결과 필터링
+			for row in normal_results:
+				should_include = False
+				all_ok = True
+				
+				# 각 클라이언트의 결과 확인
+				for client_id in line_config['client_ids']:
+					result_column = f"{client_id}_result"
+					if result_column in row and row[result_column]:
+						result_value = str(row[result_column]).upper()
+						if result_value == 'NONE' or 'ERROR' in result_value:
+							all_ok = False
+						elif ':' in result_value:
+							part_name, label = result_value.split(':', 1)
+							if 'OK' not in label:
+								all_ok = False
+				
+				# 필터링 조건에 따른 포함 여부 결정
+				if defect_name == '전체':
+					should_include = True
+				elif defect_name == '양품':
+					should_include = all_ok
+				else:  # 특정 불량명
+					# 해당 불량이 있는지 확인
+					for client_id in line_config['client_ids']:
+						result_column = f"{client_id}_result"
+						if result_column in row and row[result_column]:
+							result_value = str(row[result_column]).upper()
+							if result_value != 'NONE' and ':' in result_value:
+								part_name, label = result_value.split(':', 1)
+								if label in target_labels:
+									should_include = True
+									break
+				
+				# 카운트 및 필터링
+				if should_include:
+					normal_filtered.append(row)
+					if all_ok:
+						ok_count += 1
+					else:
+						ng_count += 1
+					total_count += 1
+			
+			# 카운트 업데이트
+			self.history_canvas.itemconfig(self.total_count_place, text=str(total_count))
+			self.history_canvas.itemconfig(self.ok_count_place, text=str(ok_count))
+			self.history_canvas.itemconfig(self.ng_count_place, text=str(ng_count))
+			
+			# 로그 표시
+			self.display_search_logs(critical_filtered, normal_filtered, model_name)
+			
+		except Exception as e:
+			messagebox.showerror("오류", f"검색 중 오류가 발생했습니다: {traceback.format_exc()}")
+			LM.log_print(f"[ERROR] History search failed: {traceback.format_exc()}")
+
+	def display_search_logs(self, critical_results, normal_results, model_name):
+		"""검색 결과를 로그 형태로 표시"""
+		# 기존 로그 삭제
+		self.critical_ng_log.delete(0, tk.END)
+		self.normal_ng_log.delete(0, tk.END)
+		
+		# 중대 불량 로그 표시
+		for row in critical_results:
+			self.add_log_entry(self.critical_ng_log, row, model_name)
+		
+		# 일반 불량 로그 표시
+		for row in normal_results:
+			self.add_log_entry(self.normal_ng_log, row, model_name)
+
+	def add_log_entry(self, log_listbox, row, model_name):
+		"""로그 항목 추가"""
+		# 불량이 있는 클라이언트들의 파트 정보 수집
+		ng_parts = []
+		none_parts = []
+		critical_ng_parts = []
+		all_ok = True
+		
+		for client_id in line_config['client_ids']:
+			result_column = f"{client_id}_result"
+			if result_column in row and row[result_column]:
+				result_value = str(row[result_column]).upper()
+				if result_value == 'NONE':
+					client_name = model_info['models'][model_name][client_id]['name']
+					none_parts.append(client_name)
+					all_ok = False
+				elif ':' in result_value:
+					part_name, label = result_value.split(':', 1)
+					if 'OK' not in label:
+						client_name = model_info['models'][model_name][client_id]['name']
+						part_info = f"{client_name} {part_name}"
+						
+						# 중대불량 여부 확인
+						if log_listbox == self.critical_ng_log and label in model_info['models'][model_name][client_id]['critical_ng_list']:
+							critical_ng_parts.append(part_info)
+						else:
+							ng_parts.append(part_info)
+						all_ok = False
+			else:
+				client_name = model_info['models'][model_name][client_id]['name']
+				none_parts.append(client_name)
+				all_ok = False
+		
+		# 파트 정보 조합 (중대불량 우선)
+		if log_listbox == self.critical_ng_log and critical_ng_parts:
+			all_parts = critical_ng_parts + ng_parts + none_parts
+			if len(all_parts) == 1:
+				part_info = all_parts[0]
+			else:
+				part_info = f"{all_parts[0]} 외 {len(all_parts)-1}"
+		elif ng_parts and none_parts:  # 불량과 미검사가 혼재 - 하나로 통합
+			all_parts = ng_parts + none_parts
+			if len(all_parts) == 1:
+				part_info = all_parts[0]
+			else:
+				part_info = f"{all_parts[0]} 외 {len(all_parts)-1}"
+		elif ng_parts:  # 불량만 있는 경우
+			if len(ng_parts) == 1:
+				part_info = ng_parts[0]
+			else:
+				part_info = f"{ng_parts[0]} 외 {len(ng_parts)-1}"
+		elif none_parts:  # 미검사만 있는 경우
+			if len(none_parts) == 1:
+				part_info = f"{none_parts[0]} 미검사"
+			else:
+				part_info = f"{none_parts[0]} 외 {len(none_parts)-1}"
+		else:  # 양품인 경우
+			part_info = "전체"
+
+		# 불량 타입 정보 수집
+		ng_types = []
+		for client_id in line_config['client_ids']:
+			result_column = f"{client_id}_result"
+			if result_column in row and row[result_column]:
+				result_value = str(row[result_column]).upper()
+				if result_value != 'NONE' and ':' in result_value:
+					part_name, label = result_value.split(':', 1)
+					if 'ERROR' in label:
+						ng_types.append('검사 오류')
+						break
+					elif 'OK' not in label:
+						for client_id_check in line_config['client_ids']:
+							if label in model_info['models'][model_name][client_id_check]['label_ng_conditions']:
+								korean_name = model_info['models'][model_name][client_id_check]['label_ng_conditions'][label][0]
+								ng_types.append(korean_name)
+								break
+		
+		# 불량 타입 조합
+		if not ng_types and none_parts:
+			ng_type = "미검사"
+		elif not ng_types and all_ok:
+			ng_type = "양품"
+		elif len(ng_types) == 1:
+			ng_type = ng_types[0]
+		else:
+			ng_type = f"{ng_types[0]} 외 {len(ng_types)-1}건"
+		
+		# 로그 형식: [시간] 파트 정보
+		#           : 불량 타입
+		log_time = row['input_time'].strftime('%H:%M:%S')
+		
+		# 첫 번째 줄 (시간 + 파트 정보)
+		first_line = f"[{log_time}] {part_info}"
+		# 두 번째 줄 (불량 타입)
+		second_line = f"  : {ng_type}"
+		
+		# 양품인지 불량인지 판단하여 색상 결정
+		is_ok = all_ok and not ng_parts and not critical_ng_parts and not none_parts
+		
+		# 리스트박스에 항목 추가 (색상은 태그로 처리)
+		log_listbox.insert(tk.END, first_line)
+		log_listbox.insert(tk.END, second_line)
+		
+		# 현재 리스트박스의 항목 수를 가져와서 인덱스 계산
+		current_size = log_listbox.size()
+		first_line_index = current_size - 2  # 첫 번째 줄 인덱스
+		second_line_index = current_size - 1  # 두 번째 줄 인덱스
+		
+		# 색상 태그 적용 (Tkinter Listbox는 제한적이므로 배경색으로 구분)
+		if is_ok:
+			# 양품인 경우 초록색 배경
+			log_listbox.itemconfig(second_line_index, {'bg': '#2d5a2d'})
+			log_listbox.itemconfig(first_line_index, {'bg': '#2d5a2d'})
+		else:
+			# 불량인 경우 빨간색 배경
+			log_listbox.itemconfig(second_line_index, {'bg': '#a40808'})
+			log_listbox.itemconfig(first_line_index, {'bg': '#a40808'})
+
+	def on_log_select(self, event):
+		"""로그 선택 이벤트 핸들러"""
+		# 어떤 리스트박스에서 이벤트가 발생했는지 확인
+		widget = event.widget
+		
+		# 클릭한 위치가 실제 항목인지 확인
+		index = widget.nearest(event.y)
+		if index < 0:
+			# 빈 공간을 클릭한 경우 선택 해제
+			widget.selection_clear(0, tk.END)
+			return
+		
+		# 다른 리스트박스의 선택 해제
+		if widget == self.critical_ng_log:
+			self.normal_ng_log.selection_clear(0, tk.END)
+		else:
+			self.critical_ng_log.selection_clear(0, tk.END)
+		
+		if not widget.curselection():
+			return
+			
+		selected_idx = widget.curselection()[0]
+		pair_idx = selected_idx - (selected_idx % 2)  # 짝수 인덱스 (첫 번째 줄)
+		
+		# 선택된 항목들을 쌍으로 선택
+		widget.selection_clear(0, tk.END)
+		widget.selection_set(pair_idx)
+		widget.selection_set(pair_idx + 1)
+		
+		# 로그에서 시간 추출
+		log_line = widget.get(pair_idx)
+		match = re.search(r"\[(\d{2}:\d{2}:\d{2})\]", log_line)
+		if not match:
+			return
+		
+		log_time = match.group(1)
+		
+		# 해당 테이블에서 로그 조회
+		if widget == self.critical_ng_log:
+			table_name = 'critical_results'
+		else:
+			table_name = 'normal_results'
+		
+		# DB에서 해당 시간의 로그 조회
+		row = DB.get_result_by_time_from_table(log_time, table_name)
+		if row:
+			self.history_show_log_images_from_row(row)
+		else:
+			LM.log_print(f"[ERROR] No result found for time: {log_time} in {table_name}")
+
+	def history_show_log_images_from_row(self, row):
+		"""DB 행 데이터에서 이미지 표시"""
+		for client_id in line_config['client_ids']:
+			result_column = f"{client_id}_result"
+			path_column = f"{client_id}_path"
+			
+			# 결과와 이미지 경로 가져오기
+			result_value = row.get(result_column, 'None')
+			label = str(result_value.split(':')[1]).upper()
+			image_path = row.get(path_column, 'None')
+			
+			# 표시 인덱스 가져오기
+			display_idx = HW.inspection_sequence[client_id]
+			
+			# 이미지 생성 및 표시
+			show_image = None
+			
+			# 결과가 None or error인 경우
+			if label == 'NONE' or 'ERROR' in label:
+				show_image = HW.make_show_image(client_id, label, None)
+			else:  # 검사 결과 정상인 경우
+				try:
+					abs_path = os.path.join('db', image_path)
+					image = cv2.imread(abs_path)
+					show_image = HW.make_show_image(client_id, label, image)
+				except Exception as e:
+					LM.log_print(f"[ERROR] Failed to load image: {str(e)}")
+					show_image = HW.make_show_image(client_id, 'ERROR', None)
+			
+			# 캔버스에 이미지 표시
+			self.show_image_list[display_idx] = show_image
+			self.history_canvas.itemconfig(self.show_place_list[display_idx], 
+									   image=self.show_image_list[display_idx], 
+									   state='normal')
+			
+			# OK/NG 신호 표시
+			self.switch_ok_ng_sign(label, display_idx)
+
+	def switch_ok_ng_sign(self, label, display_idx):
+		"""OK, NG 표시 스위치"""
+		label = str(label).upper()
+		if label == 'NONE':
+			self.history_canvas.itemconfig(self.ok_sign_place_list[display_idx], state='hidden')
+			self.history_canvas.itemconfig(self.ng_sign_place_list[display_idx], state='hidden')
+		elif 'OK' not in label:
+			self.history_canvas.itemconfig(self.ok_sign_place_list[display_idx], state='hidden')
+			self.history_canvas.itemconfig(self.ng_sign_place_list[display_idx], state='normal')
+		else:
+			self.history_canvas.itemconfig(self.ok_sign_place_list[display_idx], state='normal')
+			self.history_canvas.itemconfig(self.ng_sign_place_list[display_idx], state='hidden')
+
+	def on_model_selected(self, event):
+		"""모델 선택 이벤트 핸들러"""
+		selected_model = self.model_combobox.get()
+		if selected_model:
+			# 불량명 목록 업데이트
+			self.load_defect_list()
+			print(f"Selected model: {selected_model}")
+
+	def on_log_key(self, event):
+		widget = event.widget
+		size = widget.size()
+		sel = widget.curselection()
+		if not sel:
+			return
+		idx = sel[0] - (sel[0] % 2)
+		if event.keysym == "Up":
+			new_idx = max(0, idx - 2)
+		elif event.keysym == "Down":
+			new_idx = min(size - 2, idx + 2)
+		else:
+			return
+		widget.selection_clear(0, tk.END)
+		widget.selection_set(new_idx)
+		widget.selection_set(new_idx + 1)
+		widget.activate(new_idx)  # 커서를 첫 줄로 이동
+		widget.see(new_idx)
+		# 방향키 이동 시에도 on_log_select를 호출하여 이미지 등 갱신
+		fake_event = type('Event', (object,), {'widget': widget, 'y': 0})()
+		self.on_log_select(fake_event)
+
+	def tkraise(self):
+		"""프레임 활성화 시 모델 목록과 불량명 목록 업데이트"""
+		# 모델 목록 업데이트
+		self.load_model_list()
+		
+		# 현재 선택된 모델이 있으면 불량명 목록도 업데이트
+		if self.model_combobox.get():
+			self.load_defect_list()
+		
+		super().tkraise()
+
+
+# ▶ 관리자 프레임 클래스
+class AdminFrame(tk.Frame):
+	def __init__(self, master=None):
+		super().__init__(master)
+		self.master = master
+
+		self.initial_settings = {}  # 초기 설정값 저장
+		self.is_new_model_mode = False  # 신규 모델 등록 모드
+		self.model_entry = None  # 모델명 입력 엔트리
+		self.model_number_entry = None  # 모델 번호 입력 엔트리
+		self.mapping_window = None  # 모델 매칭 관리 창
+
+		self.bg_image = ImageTk.PhotoImage(file=f"bg/common/admin_bg.png")
+		self.cancel_new_model_registration_btn_image = ImageTk.PhotoImage(file=f"bg/common/cancel_new_model_registration_btn.png")
+		self.registration_btn_image = ImageTk.PhotoImage(file=f"bg/common/registration_btn.png")
+
+		self.master.attributes("-fullscreen", True)
+		self.master.bind("<F11>", lambda event: self.master.attributes("-fullscreen", not self.master.attributes("-fullscreen")))
+		self.master.bind("<Escape>", lambda event: self.master.attributes("-fullscreen", False))
+		
+		# 모델 매칭 정보가 없으면 초기화
+		if 'model_mapping' not in model_info:
+			model_info['model_mapping'] = {}
+		
+		self.create_widgets()
+		
+	def create_widgets(self):
+		self.grid(row=0, column=0)
+		self.admin_canvas = tk.Canvas(self, width=1920, height=1080)
+		self.BG = self.admin_canvas.create_image(0, 0, image=self.bg_image, anchor="nw")
+
+		self.font = ('Malgun Gothic', 14, 'bold')
+
+		# 모델 선택 콤보박스
+		self.model_combobox = tk.ttk.Combobox(self.admin_canvas, font=self.font, state='readonly', width=15)
+		self.model_combobox.place(x=1787, y=165, anchor="center")
+
+		# 모델 번호
+		self.model_number_place = self.admin_canvas.create_text(1841, 229, text="", font=self.font, fill='white')
+
+		# 신규 형번 등록 이미지
+		self.cancel_new_model_registration_place = self.admin_canvas.create_image(1683, 363, image=self.cancel_new_model_registration_btn_image, 
+																				  anchor="nw",state='hidden')
+		
+		# 저장 & 등록 버튼
+		self.registration_place = self.admin_canvas.create_image(1678, 940, image=self.registration_btn_image, 
+																				  anchor="nw",state='hidden')
+		
+		# 모델 목록 로드
+		self.load_model_list()
+		
+		# 모델 변경 이벤트 바인딩
+		self.model_combobox.bind('<<ComboboxSelected>>', self.update_model_info_ui)
+		
+		# 클라이언트 설정 창들 생성
+		self.update_model_info_ui()
+
+		self.admin_canvas.bind("<Button-1>", self.main_btn)
+		self.admin_canvas.pack()
+	
+	def load_model_list(self):
+		"""모델 목록을 콤보박스에 로드"""
+		# model_mapping의 키(번호) 기준 오름차순 정렬
+		sorted_model_names = [
+			model_info['model_mapping'][num]
+			for num in sorted(model_info['model_mapping'], key=lambda x: int(x))
+		]
+		self.model_combobox['values'] = sorted_model_names
+
+	def update_model_info_ui(self, event=None):
+		"""모델 변경 시 UI 전체 갱신"""
+		# 1. 선택된 모델명 가져오기 (이벤트 객체가 전달되어도 콤보박스에서 직접 가져옴)
+		selected_model = self.model_combobox.get()
+		
+		# 2. 모델 번호 찾기 및 표시 업데이트
+		model_number = None
+		for num, name in model_info['model_mapping'].items():
+			if name == selected_model:
+				model_number = num
+				break
+		
+		if model_number is not None:
+			self.admin_canvas.itemconfig(self.model_number_place, text=model_number)
+		else:
+			self.admin_canvas.itemconfig(self.model_number_place, text="매칭없음")
+		
+		# 3. 기존 창들 제거 (존재하는 경우에만)
+		if hasattr(self, 'client_settings_windows') and self.client_settings_windows:
+			for window in self.client_settings_windows.values():
+				if window and hasattr(window, 'destroy'):
+					try:
+						window.destroy()
+					except:
+						pass  # 이미 제거된 경우 무시
+		
+		# 4. 새로운 창들 생성 (선택된 모델명으로)
+		self.client_settings_windows = {}
+		
+		if selected_model and selected_model in model_info['models']:
+			client_ids = [name for name in model_info['models'][selected_model].keys() 
+						 if name != 'current_status']
+			
+			# 각 클라이언트별로 설정 창 생성
+			for i, client_id in enumerate(client_ids):
+				# 창 위치 계산 (화면에 여러 창을 배치)
+				x_pos = 30 + (i % 3) * 540  
+				y_pos = 135 + (i // 3) * 413  
+				
+				# 설정 창 생성
+				settings_frame = ClientSettingsFrame(self.admin_canvas, selected_model, client_id, 
+												   x_pos, y_pos)
+				self.client_settings_windows[client_id] = settings_frame
+
+	def main_btn(self, event):
+		"""메인 버튼 클릭 이벤트"""
+		x = event.x
+		y = event.y
+		
+		if 1870 < x < 1912 and 11 < y < 53:
+			print("program exit")
+			MF.on_closing()
+		
+		elif 89 < x < 271 and 976 < y < 1051:
+			print("main frame open")
+			if self.has_settings_changed():
+				result = messagebox.askyesno("확인", "설정이 저장되지않았습니다.\n저장하지 않고 페이지를 이동하시겠습니까?")
+				if result:
+					MF.tkraise()
+			else:
+				MF.tkraise()
+		
+		# 이력 조회 버튼 클릭
+		elif 274 < x < 456 and 976 < y < 1051:
+			print("history frame open")
+			if self.has_settings_changed():
+				result = messagebox.askyesno("확인", "설정이 저장되지않았습니다.\n저장하지 않고 페이지를 이동하시겠습니까?")
+				if result:
+					HF.tkraise()    
+			else:
+				HF.tkraise()
+
+		# 저장 버튼
+		elif 1675 < x < 1889 and 937 < y < 1053:
+			result = messagebox.askyesno("확인", "설정을 저장하시겠습니까?")
+			if result:
+				print("client settings save")
+				self.save_client_settings()
+
+		# 형번 확인
+		elif 1681 < x < 1893 and 278 < y < 355:
+			print("model number check")
+			self.open_model_mapping_window()
+		
+		# 신규 형번 등록&취소 버튼
+		elif 1681 < x < 1893 and 361 < y < 438:
+			print("new model registration")
+			self.new_model_registration()
+		
+		# 형번 삭제
+		elif 1681 < x < 1893 and 444 < y < 521:
+			print("model delete")
+			result = messagebox.askyesno("확인", f"{self.model_combobox.get()}형번 정보를 삭제하시겠습니까?")
+			if result:
+				self.delete_selected_model()
+		
+		# 코드 업데이트
+		elif 1681 < x < 1893 and 527 < y < 604:
+			print("code update")
+			self.update_code()
+	
+	def update_code(self):
+		"""코드 업데이트"""
+		result = messagebox.askyesno("최종 확인", "코드를 업데이트하시겠습니까?")
+		if result == True:
+			LM.log_print('[UPDATE] Admin code update order')
+
+			repo_name = f'Main_{line_type.upper()}'  # ex) Main_CUP, Main_CONE
+
+			try :
+				if os.path.exists('Main_.py'):         
+					os.remove("Main_.py")     # 기존 백업 메인 코드 삭제
+
+				if os.path.exists('Main.py'): # 기존 메인 코드 백업         
+					os.rename('Main.py', 'Main_.py') 
+				git_url = f'https://github.com/KRThor/{repo_name}.git' # 코드 업데이트할 깃허브 주소
+				self.git_clone(git_url) # 다운로드
+				LM.log_print(f"[UPDATE] {repo_name} code download success")
+				time.sleep(0.2)
+				os.rename(f'{repo_name}/Main.py', 'Main.py') # 다운로드 받은 코드 경로 수정
+				time.sleep(0.2)
+				os.system(f'rmdir /S /Q {repo_name}') # 다운로드 받은 파일 삭제 (파일 있으면 충돌로 에러나서 업데이트 후 삭제)
+				LM.log_print(f"[UPDATE] {repo_name} folder remove success")
+				time.sleep(0.2)
+				os.system('python compile_M.py')
+				LM.log_print(f"[UPDATE] {repo_name} code compile success")
+			except :
+				LM.log_print(f"[UPDATE] {repo_name} code update failed: {traceback.format_exc()}")
+		else :
+			LM.log_print(f"[UPDATE] {repo_name} code update canceled")
+
+	def git_clone(self, git_url):
+		target_dir = os.getcwd()  # 현재 경로
+		self.make_safe_dir(target_dir)
+		git.Git(target_dir).clone(git_url) # 저장될 공간
+		
+	def open_model_mapping_window(self):
+		"""모델 매칭 관리 창 열기"""
+		# 기존 창이 열려있으면 닫기
+		if self.mapping_window is not None:
+			try:
+				self.mapping_window.destroy()
+			except:
+				pass  # 이미 닫힌 경우 무시
+			self.mapping_window = None
+		
+		# 새 창 생성
+		self.mapping_window = tk.Toplevel(self)
+		self.mapping_window.title("모델 매칭 관리")
+		self.mapping_window.geometry("600x600")
+		self.mapping_window.configure(bg='#2a5565')
+		
+		# 창이 닫힐 때 변수 초기화
+		def on_window_close():
+			window_to_destroy = self.mapping_window
+			self.mapping_window = None
+			window_to_destroy.destroy()
+		
+		self.mapping_window.protocol("WM_DELETE_WINDOW", on_window_close)
+		
+		# 스크롤 가능한 프레임
+		canvas = tk.Canvas(self.mapping_window, bg='#2a5565')
+		scrollbar = tk.Scrollbar(self.mapping_window, orient="vertical", command=canvas.yview)
+		scrollable_frame = tk.Frame(canvas, bg='#2a5565')
+		
+		scrollable_frame.bind(
+			"<Configure>",
+			lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+		)
+		
+		canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+		canvas.configure(yscrollcommand=scrollbar.set)
+		
+		# 기존 형번 매칭 정보 표시
+		mapping_label = tk.Label(scrollable_frame, text="현재 형번 매칭:", 
+								font=('Malgun Gothic', 14, 'bold'), bg='#2a5565', fg='white')
+		mapping_label.pack(anchor=tk.W, padx=10, pady=5)
+		
+		# 오름차순 정렬하여 표시
+		for model_number in sorted(model_info['model_mapping'], key=lambda x: int(x)):
+			model_name = model_info['model_mapping'][model_number]
+			row_frame = tk.Frame(scrollable_frame, bg='#2a5565')
+			row_frame.pack(anchor=tk.W, padx=20, pady=2)
+			tk.Label(row_frame, text=f"번호 {model_number} →", font=('Malgun Gothic', 12), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+			model_entry = tk.Entry(row_frame, font=('Malgun Gothic', 12), width=20, readonlybackground='#2a5565', fg='white', bd=0, highlightthickness=0, relief='flat', state='readonly')
+			model_entry.pack(side=tk.LEFT)
+			model_entry.configure(state='normal')
+			model_entry.insert(0, model_name)
+			model_entry.configure(state='readonly')
+		
+		# 형번 매칭 수정
+		add_frame = tk.Frame(scrollable_frame, bg='#2a5565')
+		add_frame.pack(fill=tk.X, padx=10, pady=10)
+		
+		tk.Label(add_frame, text="형번 매칭 수정:", 
+				font=('Malgun Gothic', 14, 'bold'), bg='#2a5565', fg='white').pack(anchor=tk.W)
+		
+		input_frame = tk.Frame(add_frame, bg='#2a5565')
+		input_frame.pack(anchor=tk.W, pady=5)
+		
+		tk.Label(input_frame, text="모델 번호:", font=('Malgun Gothic', 12), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		number_entry = tk.Entry(input_frame, font=('Malgun Gothic', 12), width=8)
+		number_entry.pack(side=tk.LEFT, padx=5)
+		
+		tk.Label(input_frame, text="모델명:", font=('Malgun Gothic', 12), bg='#2a5565', fg='white').pack(side=tk.LEFT, padx=(10,0))
+		model_entry = tk.Entry(input_frame, font=('Malgun Gothic', 10), width=20)
+		model_entry.pack(side=tk.LEFT, padx=5)
+
+		def update_mapping():
+			"""형번 관리에서 수정 버튼 클릭 시 실행"""
+			try:
+				model_number = int(number_entry.get())
+				model_name = model_entry.get().strip()
+
+				if not model_name:
+					messagebox.showerror("오류", "모델명을 입력해주세요.")
+					self.mapping_window.lift()
+					self.mapping_window.focus_force()
+					return
+
+				# 기존에 이 번호에 매핑된 모델명
+				old_model_name = model_info['model_mapping'].get(str(model_number), None)
+				
+				# 같은 번호에 다른 모델명을 매핑하려는 경우 확인
+				if old_model_name and old_model_name != model_name:
+					result = messagebox.askyesno(
+						"확인", 
+						f"번호 {model_number}에 이미 '{old_model_name}'이 매핑되어 있습니다.\n"
+						f"'{model_name}'으로 변경하시겠습니까?\n\n"
+						f"기존 매핑: {model_number} → {old_model_name}\n"
+						f"새 매핑: {model_number} → {model_name}"
+					)
+					if not result:
+						return
+
+				# 이미 다른 번호에 매핑되어 있으면 기존 매핑 삭제(이동)
+				to_delete = None
+				for num, name in model_info['model_mapping'].items():
+					if name == model_name and str(model_number) != num:
+						to_delete = num
+						break
+
+				if to_delete is not None:
+					result = messagebox.askyesno(
+						"확인",
+						f"모델명 '{model_name}'이 번호 {to_delete}에 이미 매핑되어 있습니다.\n"
+						f"번호 {to_delete}의 매핑을 삭제하고 번호 {model_number}로 이동하시겠습니까?\n\n"
+						f"기존: {to_delete} → {model_name}\n"
+						f"변경: {model_number} → {model_name}"
+					)
+					if not result:
+						return
+					del model_info['model_mapping'][to_delete]
+
+				# 모델명 변경: models의 key도 같이 변경
+				if old_model_name and old_model_name != model_name:
+					# models에 old_model_name이 있으면 key를 model_name으로 변경
+					if old_model_name in model_info['models']:
+						model_info['models'][model_name] = model_info['models'].pop(old_model_name)
+
+				model_info['model_mapping'][str(model_number)] = model_name
+
+				# 수정한 모델 번호가 현재 사용중인 모델인 경우 전체 정보 갱신
+				if str(model_number) == str(MB.model_number):
+					MB.model_name = model_info['model_mapping'][str(model_number)]
+					MF.main_canvas.itemconfig(MF.model_name_place, text=MB.model_name)
+					self.model_combobox.set(MB.model_name)
+				else:  # 콤보박스만 갱신
+					# 현재 선택된 모델이 바뀐 모델인지 확인 (old_model_name과 비교)
+					if old_model_name and self.model_combobox.get() == old_model_name:
+						# 콤보박스 선택을 새 이름으로 변경
+						self.model_combobox.set(model_name)
+				
+				# JSON 파일에 저장
+				MF.save_info_json(model_info)
+				SS.send_json()
+				
+				# 성공 메시지 표시
+				messagebox.showinfo("성공", f"모델 매핑이 수정되었습니다.\n{model_number} → {model_name}")
+				
+				self.load_model_list()
+				self.update_model_info_ui()
+
+				# 창을 닫지 않고 최신화
+				self.open_model_mapping_window()
+
+			except ValueError:
+				messagebox.showerror("오류", "모델 번호는 숫자로 입력해주세요.")
+				self.mapping_window.lift()
+				self.mapping_window.focus_force()
+				return
+
+		add_button = tk.Button(input_frame, text="수정", command=update_mapping,
+							  font=('Malgun Gothic', 10), bg='#4CAF50', fg='white')
+		add_button.pack(side=tk.LEFT, padx=10)
+		
+		# 매칭 삭제
+		delete_frame = tk.Frame(scrollable_frame, bg='#2a5565')
+		delete_frame.pack(fill=tk.X, padx=10, pady=10)
+		
+		tk.Label(delete_frame, text="형번 삭제:", 
+				font=('Malgun Gothic', 14, 'bold'), bg='#2a5565', fg='white').pack(anchor=tk.W)
+		
+		delete_input_frame = tk.Frame(delete_frame, bg='#2a5565')
+		delete_input_frame.pack(anchor=tk.W, pady=5)
+		
+		tk.Label(delete_input_frame, text="모델 번호:", font=('Malgun Gothic', 12), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		delete_number_entry = tk.Entry(delete_input_frame, font=('Malgun Gothic', 12), width=8)
+		delete_number_entry.pack(side=tk.LEFT, padx=5)
+		
+		def delete_mapping():
+			try:
+				model_number = delete_number_entry.get()
+				if model_number in model_info['model_mapping']:
+					model_name = model_info['model_mapping'][model_number]
+					result = messagebox.askyesno("확인", f"매칭을 삭제하시겠습니까?\n{model_number} → {model_name}")
+					if result:
+						del model_info['model_mapping'][model_number]
+						
+						# JSON 파일에 저장
+						MF.save_info_json(model_info)
+						SS.send_json()
+						
+						messagebox.showinfo("성공", "매칭이 삭제되었습니다.")
+						self.open_model_mapping_window()  # 창을 닫지 않고 최신화
+				else:
+					messagebox.showerror("오류", "해당 모델 번호의 매칭이 존재하지 않습니다.")
+					self.mapping_window.lift()
+					self.mapping_window.focus_force()
+					return
+				
+			except Exception as e:
+				messagebox.showerror("오류", f"삭제 중 오류가 발생했습니다: {str(e)}")
+				self.mapping_window.lift()
+				self.mapping_window.focus_force()
+				return
+			
+		delete_button = tk.Button(delete_input_frame, text="삭제", command=delete_mapping,
+								 font=('Malgun Gothic', 10), bg='#f44336', fg='white')
+		delete_button.pack(side=tk.LEFT, padx=10)
+		
+		# 닫기 버튼
+		close_button = tk.Button(self.mapping_window, text="닫기", command=on_window_close,
+								font=('Malgun Gothic', 12, 'bold'), bg='#666666', fg='white')
+		close_button.place(relx=0.5, rely=0.97, anchor="s")
+		
+		canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+		scrollbar.pack(side="right", fill="y")
+	
+	def get_model_by_number(self, model_number):
+		"""모델 번호로 모델명을 가져오기"""
+		model_number_str = str(model_number)
+		if model_number_str in model_info['model_mapping']:
+			return model_info['model_mapping'][model_number_str]
+		else:
+			print(f"[WARNING] Model number {model_number} not found in mapping")
+			return None
+	
+	def save_client_settings(self):
+		"""모든 클라이언트 설정을 한번에 저장"""
+		try:
+			# 신규 모델 등록 모드인 경우 새로운 모델명과 번호 확인
+			if self.is_new_model_mode:
+				new_model_name = self.model_entry.get().strip()
+				new_model_number = self.model_number_entry.get().strip()
+
+				if not new_model_name or new_model_name == "새 모델명 입력":
+					messagebox.showerror("오류", "새로운 모델명을 입력해주세요.")
+					return
+
+				if not new_model_number or new_model_number == "번호":
+					messagebox.showerror("오류", "모델 번호를 입력해주세요.")
+					return
+				
+				try:
+					new_model_number = int(new_model_number)
+				except ValueError:
+					messagebox.showerror("오류", "모델 번호는 숫자로 입력해주세요.")
+					return
+				
+				# 모델명 중복 확인
+				if new_model_name in model_info['models']:
+					result = messagebox.askyesno("확인", f"모델명 '{new_model_name}'이 이미 존재합니다.\n덮어쓰시겠습니까?")
+					if not result:
+						return
+				
+				# 모델 번호 중복 확인
+				if str(new_model_number) in model_info['model_mapping']:
+					result = messagebox.askyesno("확인", f"모델 번호 '{new_model_number}'이 이미 사용 중입니다.\n덮어쓰시겠습니까?")
+					if not result:
+						return
+			
+			# 모든 클라이언트 설정 창에서 저장 실행
+			for client_id, settings_frame in self.client_settings_windows.items():
+				print(f"[SAVE] Saving settings for client: {client_id}")
+				
+				save_result = settings_frame.save_settings()
+				if not save_result:
+					return  # 저장 중단
+			
+			# 신규 모델 등록 모드인 경우 새로운 모델을 model_info에 추가
+			if self.is_new_model_mode:
+				new_model_name = self.model_entry.get().strip()
+				new_model_number = int(self.model_number_entry.get().strip())
+				
+				# 새로운 모델 데이터 생성
+				new_model_data = {
+					'current_status': '신규 등록'
+				}
+				
+				# 각 클라이언트의 설정을 새로운 모델에 추가
+				for client_id, settings_frame in self.client_settings_windows.items():
+					new_model_data[client_id] = settings_frame.client_data
+				
+				# model_info에 새로운 모델 추가
+				model_info['models'][new_model_name] = new_model_data
+				
+				# 모델 매칭에 추가
+				model_info['model_mapping'][str(new_model_number)] = new_model_name
+				
+				# 신규 모델 등록 모드 종료
+				self.is_new_model_mode = False
+				self.admin_canvas.itemconfig(self.cancel_new_model_registration_place, state='hidden')
+				self.admin_canvas.itemconfig(self.registration_place, state='hidden')
+				
+				# 엔트리를 콤보박스로 변경
+				self.switch_to_model_combobox()
+				
+				# 모델 목록 업데이트
+				self.load_model_list()
+				
+				# 새로 생성된 모델 선택
+				self.model_combobox.set(new_model_name)
+				self.update_model_info_ui()
+				
+				print(f"[SAVE] New model '{new_model_name}' (number: {new_model_number}) created successfully")
+
+			if self.is_new_model_mode:
+				messagebox.showinfo("성공", f"새로운 모델 '{new_model_name}'이 생성되었습니다.")
+			else:
+				messagebox.showinfo("성공", "모든 클라이언트 설정이 저장되었습니다.")
+
+			for client_id in line_config['client_ids']:
+				if not SS.load_complete_check_dict[client_id]:
+					MF.save_info_json(model_info)
+					SS.send_json_and_model(client_id)  # 모델 로드 실패한 클라이언트는 모델 로드부터 전부 재시도
+					print(f"[SAVE]  Previous {client_id} model failed, retrying")
+				else:  # 모델 로드 성공한 클라이언트는 설정만 저장
+					MF.save_info_json(model_info)
+					SS.send_json()
+					print(f"[SAVE] {client_id} model json save and send")
+
+			# 다시 표시
+			self.update_model_info_ui()
+
+			print("[SAVE] All client settings saved successfully")
+			
+		except Exception as e:
+			messagebox.showerror("오류", f"설정 저장 중 오류가 발생했습니다: {str(e)}")
+			print(f"[ERROR] Failed to save client settings: {str(e)}")
+
+	def has_settings_changed(self):
+		"""설정이 변경되었는지 확인 - 현재 UI 설정과 JSON 파일 내용 비교
+		저장되지않은 설정이 있으면 True, 저장된거면 False"""
+		try:
+			# 현재 UI의 설정값들을 가져오기
+			current_ui_settings = {}
+			for client_id, settings_frame in self.client_settings_windows.items():
+				current_ui_settings[client_id] = settings_frame.get_settings()
+			
+			# 현재 선택된 모델
+			selected_model = self.model_combobox.get()
+			if not selected_model or selected_model not in model_info['models']:
+				return False
+			
+			# JSON 파일의 현재 설정과 비교
+			json_settings = {}
+			for client_id in model_info['models'][selected_model].keys():
+				if client_id != 'current_status':
+					json_settings[client_id] = model_info['models'][selected_model][client_id]
+			
+			# 차이점 출력
+			changed = False
+			for client_id in current_ui_settings:
+				if client_id not in json_settings:
+					print(f"[DIFF] {client_id} - UI에만 존재")
+					changed = True
+				elif current_ui_settings[client_id] != json_settings[client_id]:
+					print(f"[DIFF] {client_id} - 값이 다름")
+					for k in current_ui_settings[client_id]:
+						v1 = current_ui_settings[client_id][k]
+						v2 = json_settings[client_id].get(k, None)
+						if v1 != v2:
+							print(f"    {k}: UI={v1} / JSON={v2}")
+					changed = True
+			for client_id in json_settings:
+				if client_id not in current_ui_settings:
+					print(f"[DIFF] {client_id} - JSON에만 존재")
+					changed = True
+			return changed
+			
+		except Exception as e:
+			print(f"[ERROR] Error checking settings change: {str(e)}")
+			return True  # 오류 발생 시 변경된 것으로 간주
+
+	def tkraise(self):
+		"""프레임 활성화 시 원본 설정값으로 초기화"""
+		# 현재 모델의 설정창들 다시 생성
+		if MB.model_name:
+			self.model_combobox.set(MB.model_name)
+			self.update_model_info_ui()
+		
+			super().tkraise()
+
+	def new_model_registration(self):
+		"""신규 형번 등록 모드 토글"""
+		if not self.is_new_model_mode:
+			# 신규 모델 등록 모드 시작
+			self.is_new_model_mode = True
+			self.admin_canvas.itemconfig(self.cancel_new_model_registration_place, state='normal')
+			self.admin_canvas.itemconfig(self.registration_place, state='normal')
+
+			# 콤보박스를 엔트리로 변경
+			self.switch_to_model_entry()
+			
+			# 클라이언트 설정창들을 기본값으로 초기화
+			self.initialize_client_settings_with_defaults()
+			
+		else:
+			# 신규 모델 등록 모드 종료
+			self.is_new_model_mode = False
+			self.admin_canvas.itemconfig(self.cancel_new_model_registration_place, state='hidden')
+			self.admin_canvas.itemconfig(self.registration_place, state='hidden')
+
+			# 엔트리를 콤보박스로 변경
+			self.switch_to_model_combobox()
+			
+			# 원래 모델로 복원
+			self.model_combobox.set(MB.model_name)
+			self.update_model_info_ui()
+
+	def switch_to_model_entry(self):
+		"""콤보박스를 엔트리로 변경"""
+		# 기존 콤보박스 숨기기
+		self.model_combobox.place_forget()
+		
+		# 모델명 엔트리 생성
+		self.model_entry = tk.Entry(self.admin_canvas, font=self.font, width=16)
+		self.model_entry.place(x=1787, y=165, anchor="center")
+		self.model_entry.insert(0, "새 모델명 입력")
+		
+		# 모델 번호 엔트리 생성 (모델명 아래에 배치)
+		self.model_number_entry = tk.Entry(self.admin_canvas, font=self.font, width=6)
+		self.model_number_entry.place(x=1841, y=229, anchor="center")
+		
+	def switch_to_model_combobox(self):
+		"""엔트리를 콤보박스로 변경"""
+		# 엔트리 제거
+		if self.model_entry:
+			self.model_entry.destroy()
+			self.model_entry = None
+		
+		if self.model_number_entry:
+			self.model_number_entry.destroy()
+			self.model_number_entry = None
+		
+		# 콤보박스 다시 표시
+		self.model_combobox.place(x=1787, y=165, anchor="center")
+
+	def initialize_client_settings_with_defaults(self):
+		"""클라이언트 설정창들을 기본값으로 초기화"""
+		# 기존 창들 제거
+		for window in self.client_settings_windows.values():
+			window.destroy()
+		
+		# 새로운 창들 생성 (기본값으로)
+		self.create_client_settings_windows_with_defaults()
+
+	def create_client_settings_windows_with_defaults(self):
+		"""기본값으로 클라이언트 설정 창들 생성"""
+		self.client_settings_windows = {}
+		
+		# 기본 클라이언트 ID들 (line_config에서 가져오기)
+		client_ids = line_config['client_ids']
+		
+		# 각 클라이언트별로 설정 창 생성
+		for i, client_id in enumerate(client_ids):
+			# 창 위치 계산 (화면에 여러 창을 배치)
+			x_pos = 30 + (i % 3) * 540  
+			y_pos = 135 + (i // 3) * 413  
+			
+			# 기본값 모드로 설정 창 생성
+			settings_frame = ClientSettingsFrame(self.admin_canvas, "", client_id, x_pos, y_pos, is_default_mode=True)
+			self.client_settings_windows[client_id] = settings_frame
+
+	def delete_selected_model(self):
+		"""
+		AdminFrame에서 현재 선택된 모델명을 info.json의 models와 model_mapping에서 삭제.
+		단, 현재 메인화면에서 사용중인 모델은 삭제하지 않음.
+		"""
+		selected_model = self.model_combobox.get()
+
+		# 현재 사용중인 모델명 (MB.model_name, 혹은 MF에서 사용중인 모델)
+		if selected_model == MB.model_name:
+			messagebox.showwarning("경고", "현재 사용중인 모델은 삭제할 수 없습니다.")
+			return
+
+		# model_mapping에서 해당 모델명에 해당하는 번호(들) 찾기
+		numbers_to_delete = [num for num, name in model_info['model_mapping'].items() if name == selected_model]
+		if not numbers_to_delete:
+			messagebox.showerror("오류", "선택된 모델의 매핑이 존재하지 않습니다.")
+			return
+
+		# 삭제 확인
+		result = messagebox.askyesno("확인", f"모델 '{selected_model}'을(를) 완전히 삭제하시겠습니까?")
+		if not result:
+			return
+
+		# models에서 삭제
+		if selected_model in model_info['models']:
+			del model_info['models'][selected_model]
+
+		# model_mapping에서 삭제
+		for num in numbers_to_delete:
+			del model_info['model_mapping'][num]
+
+		# JSON 파일에 저장
+		MF.save_info_json(model_info)
+		SS.send_json()
+
+		messagebox.showinfo("성공", f"모델 '{selected_model}'이(가) 삭제되었습니다.")
+
+		# 최신 데이터로 다시 로드 및 UI 갱신
+		self.load_model_list()
+		
+		# 콤보박스 선택을 현재 사용중인 모델로 변경
+		self.model_combobox.set(MB.model_name)
+		self.update_model_info_ui()
+
+
+# ▶ 관리자 - 클라이언트 설정 프레임 클래스 (캔버스 내 배치용)
+class ClientSettingsFrame:
+	def __init__(self, canvas, model_name, client_id, x_pos, y_pos, is_default_mode=False):
+		self.canvas = canvas
+		self.model_name = model_name
+		self.client_id = client_id
+		self.x_pos = x_pos
+		self.y_pos = y_pos
+		self.is_default_mode = is_default_mode
+		
+		# 기본값 모드인 경우 기본 설정값 사용, 아닌 경우 기존 데이터 사용
+		if self.is_default_mode:
+			self.client_data = self.get_default_settings()
+		else:
+			self.client_data = model_info['models'][model_name][client_id]
+		
+		self.create_widgets()
+		self.load_current_settings()
+	
+	def get_default_settings(self):
+		"""클라이언트별 기본 설정값 반환"""
+		return {
+			'name': f"{self.client_id} 클라이언트",
+			'detection_use': False,
+			'detection_frame': [],
+			'inspection_only': False,
+			'origin_image_capture': True,
+			'ng_image_capture': True,
+			'inspection_image_capture': True,
+			'show_coord': [0, 0, 100, 100],
+			'detection_coords': [0, 0, 100, 100],
+			'inspection_coords': {'n시': ["", 0, 0, 100, 100, 180],
+								  '케이지': ["_sub", 0, 0, 100, 100, 180]},
+			'ok_engrave': 4,
+			'inspection_frame': 21,
+			'critical_ng_list': [],
+			'label_ng_conditions': {}
+		}
+	
+	def create_widgets(self):
+		"""위젯 생성"""
+		# 메인 프레임 (기본값 모드일 때 노란색 테두리)
+		if self.is_default_mode:
+			self.frame = tk.Frame(self.canvas, bg='#2a5565', relief=tk.RAISED, bd=3, highlightbackground='yellow', highlightthickness=2)
+			title_text = f"신규 등록: {self.client_id}"
+			title_color = 'yellow'
+		else:
+			self.frame = tk.Frame(self.canvas, bg='#2a5565', relief=tk.RAISED, bd=3, highlightbackground='white', highlightthickness=2)
+			title_text = f"클라이언트: {self.client_id}"
+			title_color = 'white'
+		
+		self.canvas.create_window(self.x_pos, self.y_pos, window=self.frame, anchor="nw")
+		
+		# 제목
+		title_label = tk.Label(self.frame, text=title_text, 
+							  font=('Malgun Gothic', 14, 'bold'), bg='#2a5565', fg=title_color)
+		title_label.pack(pady=(5, 10))
+		
+		# 스크롤 가능한 프레임
+		canvas_frame = tk.Frame(self.frame, bg='#2a5565')
+		canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+		
+		# 스크롤바가 있는 캔버스
+		self.scroll_canvas = tk.Canvas(canvas_frame, width=500, height=318, bg='#2a5565')
+		scrollbar = tk.Scrollbar(canvas_frame, orient="vertical", command=self.scroll_canvas.yview)
+		self.scrollable_frame = tk.Frame(self.scroll_canvas, bg='#2a5565')
+		
+		self.scrollable_frame.bind(
+			"<Configure>",
+			lambda e: self.scroll_canvas.configure(scrollregion=self.scroll_canvas.bbox("all"))
+		)
+		
+		self.scroll_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+		self.scroll_canvas.configure(yscrollcommand=scrollbar.set)
+		
+		# 설정 항목들 생성
+		self.create_setting_widgets()
+		
+		# 캔버스와 스크롤바 배치
+		self.scroll_canvas.pack(side="left", fill="both", expand=True)
+		scrollbar.pack(side="right", fill="y")
+	
+	def create_setting_widgets(self):
+		"""설정 위젯들 생성"""
+		self.widgets = {}
+		
+		# 기본 설정
+		basic_frame = tk.LabelFrame(self.scrollable_frame, text="기본 설정", 
+								   font=('Malgun Gothic', 10, 'bold'), bg='#2a5565', fg='white')
+		basic_frame.pack(fill=tk.X, pady=2, padx=5)
+		
+		# 이름
+		tk.Label(basic_frame, text="이름(예시: 궤도):", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W, padx=5, pady=1)
+		self.widgets['name'] = tk.Entry(basic_frame, font=('Malgun Gothic', 9), width=20)
+		self.widgets['name'].pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 배출 바이패스 여부
+		self.widgets['inspection_only'] = tk.BooleanVar()
+		tk.Checkbutton(basic_frame, text="배출 바이패스 여부", variable=self.widgets['inspection_only'],
+					  font=('Malgun Gothic', 9), bg='#2a5565', fg='white', selectcolor='#2a5565').pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 검사 프레임 수
+		tk.Label(basic_frame, text="검사 프레임 수:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W, padx=5, pady=1)
+		self.widgets['inspection_frame'] = tk.Entry(basic_frame, font=('Malgun Gothic', 9), width=8)
+		self.widgets['inspection_frame'].pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 이미지 저장 설정
+		image_frame = tk.LabelFrame(self.scrollable_frame, text="이미지 저장 설정", 
+								   font=('Malgun Gothic', 10, 'bold'), bg='#2a5565', fg='white')
+		image_frame.pack(fill=tk.X, pady=2, padx=5)
+		
+		# 원본 이미지 저장 여부
+		self.widgets['origin_image_capture'] = tk.BooleanVar()
+		tk.Checkbutton(image_frame, text="원본 이미지 저장 여부", variable=self.widgets['origin_image_capture'],
+					  font=('Malgun Gothic', 9), bg='#2a5565', fg='white', selectcolor='#2a5565').pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 불량 이미지 저장 여부
+		self.widgets['ng_image_capture'] = tk.BooleanVar()
+		tk.Checkbutton(image_frame, text="불량 이미지 저장 여부", variable=self.widgets['ng_image_capture'],
+					  font=('Malgun Gothic', 9), bg='#2a5565', fg='white', selectcolor='#2a5565').pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 검사 이미지 저장 여부
+		self.widgets['inspection_image_capture'] = tk.BooleanVar()
+		tk.Checkbutton(image_frame, text="검사 이미지 저장 여부", variable=self.widgets['inspection_image_capture'],
+					  font=('Malgun Gothic', 9), bg='#2a5565', fg='white', selectcolor='#2a5565').pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 불량별 설정
+		label_frame = tk.LabelFrame(self.scrollable_frame, text="불량별 설정", 
+								   font=('Malgun Gothic', 10, 'bold'), bg='#2a5565', fg='white')
+		label_frame.pack(fill=tk.X, pady=2, padx=5)
+		
+		# label_ng_conditions 입력 영역
+		self.label_entries_frame = tk.Frame(label_frame, bg='#2a5565')
+		self.label_entries_frame.pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 중대 불량 리스트
+		critical_frame = tk.LabelFrame(self.scrollable_frame, text="중대 불량 리스트", 
+									  font=('Malgun Gothic', 10, 'bold'), bg='#2a5565', fg='white')
+		critical_frame.pack(fill=tk.X, pady=2, padx=5)
+		
+		# 중대 불량 체크박스들을 담을 프레임
+		self.critical_checkboxes_frame = tk.Frame(critical_frame, bg='#2a5565')
+		self.critical_checkboxes_frame.pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 각인 검사 설정
+		detection_frame = tk.LabelFrame(self.scrollable_frame, text="각인 검사 설정", 
+										font=('Malgun Gothic', 10, 'bold'), bg='#2a5565', fg='white')
+		detection_frame.pack(fill=tk.X, pady=2, padx=5)
+		
+		# 각인 검사 여부
+		self.widgets['detection_use'] = tk.BooleanVar()
+		tk.Checkbutton(detection_frame, text="각인 검사 여부", variable=self.widgets['detection_use'],
+					  font=('Malgun Gothic', 9), bg='#2a5565', fg='white', selectcolor='#2a5565').pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 각인 검사 프레임
+		tk.Label(detection_frame, text="각인 검사 프레임(콤마(,)로 구분):", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W, padx=5, pady=1)
+		self.widgets['detection_frame'] = tk.Entry(detection_frame, font=('Malgun Gothic', 9), width=25)
+		self.widgets['detection_frame'].pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 각인 양품 개수
+		tk.Label(detection_frame, text="각인 양품 개수:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W, padx=5, pady=1)
+		self.widgets['ok_engrave'] = tk.Entry(detection_frame, font=('Malgun Gothic', 9), width=8)
+		self.widgets['ok_engrave'].pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 각인 검사 좌표
+		tk.Label(detection_frame, text="각인 검사 좌표:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W, padx=5, pady=1)
+		detection_coord_frame = tk.Frame(detection_frame, bg='#2a5565')
+		detection_coord_frame.pack(anchor=tk.W, padx=5, pady=1)
+		
+		tk.Label(detection_coord_frame, text="X:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['detection_coords_x'] = tk.Entry(detection_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['detection_coords_x'].pack(side=tk.LEFT, padx=2)
+		
+		tk.Label(detection_coord_frame, text="Y:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['detection_coords_y'] = tk.Entry(detection_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['detection_coords_y'].pack(side=tk.LEFT, padx=2)
+		
+		tk.Label(detection_coord_frame, text="W:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['detection_coords_w'] = tk.Entry(detection_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['detection_coords_w'].pack(side=tk.LEFT, padx=2)
+		
+		tk.Label(detection_coord_frame, text="H:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['detection_coords_h'] = tk.Entry(detection_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['detection_coords_h'].pack(side=tk.LEFT, padx=2)
+		
+		# 좌표 설정
+		coord_frame = tk.LabelFrame(self.scrollable_frame, text="좌표 설정", 
+								   font=('Malgun Gothic', 10, 'bold'), bg='#2a5565', fg='white')
+		coord_frame.pack(fill=tk.X, pady=2, padx=5)
+		
+		# 화면 출력 좌표
+		tk.Label(coord_frame, text="화면 출력 좌표:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W, padx=5, pady=1)
+		show_coord_frame = tk.Frame(coord_frame, bg='#2a5565')
+		show_coord_frame.pack(anchor=tk.W, padx=5, pady=1)
+		
+		tk.Label(show_coord_frame, text="X:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['show_coord_x'] = tk.Entry(show_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['show_coord_x'].pack(side=tk.LEFT, padx=2)
+		
+		tk.Label(show_coord_frame, text="Y:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['show_coord_y'] = tk.Entry(show_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['show_coord_y'].pack(side=tk.LEFT, padx=2)
+		
+		tk.Label(show_coord_frame, text="W:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['show_coord_w'] = tk.Entry(show_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['show_coord_w'].pack(side=tk.LEFT, padx=2)
+		
+		tk.Label(show_coord_frame, text="H:", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		self.widgets['show_coord_h'] = tk.Entry(show_coord_frame, font=('Malgun Gothic', 9), width=6)
+		self.widgets['show_coord_h'].pack(side=tk.LEFT, padx=2)
+		
+		# 분류 모델 검사 좌표
+		tk.Label(coord_frame, text="분류 모델 검사 좌표(명칭, 서브마스킹 사용여부, x, y, w, h, 회전각도):", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 분류 모델 검사 좌표 입력 영역
+		self.inspection_coords_frame = tk.Frame(coord_frame, bg='#2a5565')
+		self.inspection_coords_frame.pack(anchor=tk.W, padx=5, pady=1)
+		
+		# 분류 모델 검사 좌표 추가 버튼
+		add_inspection_coord_button = tk.Button(coord_frame, text="검사 영역 추가", command=self.add_inspection_coord,
+											   font=('Malgun Gothic', 9), bg='#4CAF50', fg='white')
+		add_inspection_coord_button.pack(anchor=tk.W, padx=5, pady=2)
+	
+	def load_current_settings(self):
+		"""현재 설정값들을 위젯에 로드"""
+		# Boolean 값들
+		for key in ['detection_use', 'inspection_only', 'origin_image_capture', 'ng_image_capture', 'inspection_image_capture']:
+			if key in self.client_data:
+				self.widgets[key].set(self.client_data[key])
+		
+		# 문자열 값들
+		for key in ['name']:
+			if key in self.client_data:
+				self.widgets[key].insert(0, str(self.client_data[key]))
+		
+		# 디텍션 검사 프레임
+		if 'detection_frame' in self.client_data:
+			value = self.client_data['detection_frame']
+			if isinstance(value, list):
+				self.widgets['detection_frame'].insert(0, ','.join(map(str, value)))
+			else:
+				self.widgets['detection_frame'].insert(0, str(value))
+		
+		# 좌표 값들 (개별 필드로 분리)
+		if 'show_coord' in self.client_data:
+			coords = self.client_data['show_coord']
+			if isinstance(coords, list) and len(coords) >= 4:
+				self.widgets['show_coord_x'].insert(0, str(coords[0]))
+				self.widgets['show_coord_y'].insert(0, str(coords[1]))
+				self.widgets['show_coord_w'].insert(0, str(coords[2]))
+				self.widgets['show_coord_h'].insert(0, str(coords[3]))
+		
+		if 'detection_coords' in self.client_data:
+			coords = self.client_data['detection_coords']
+			if isinstance(coords, list) and len(coords) >= 4:
+				self.widgets['detection_coords_x'].insert(0, str(coords[0]))
+				self.widgets['detection_coords_y'].insert(0, str(coords[1]))
+				self.widgets['detection_coords_w'].insert(0, str(coords[2]))
+				self.widgets['detection_coords_h'].insert(0, str(coords[3]))
+		
+		# 분류 모델 검사 좌표
+		if 'inspection_coords' in self.client_data:
+			self.load_inspection_coords()
+		
+		# 정수 값들
+		for key in ['ok_engrave', 'inspection_frame']:
+			if key in self.client_data:
+				self.widgets[key].insert(0, str(self.client_data[key]))
+		
+		# 중대 불량 리스트와 label_ng_conditions 로드
+		self.load_critical_ng_list()
+		self.load_label_ng_conditions()
+	
+	def load_inspection_coords(self):
+		"""분류 모델 검사 좌표 로드"""
+		# 기존 입력 필드들 제거
+		for widget in self.inspection_coords_frame.winfo_children():
+			widget.destroy()
+		
+		if 'inspection_coords' in self.client_data:
+			for area_name, coords in self.client_data['inspection_coords'].items():
+				self.create_inspection_coord_entry(area_name, coords)
+	
+	def create_inspection_coord_entry(self, area_name, coords=None):
+		"""분류 모델 검사 좌표 입력 필드 생성"""
+		if coords is None:
+			coords = ["", 0, 0, 100, 100, 0]
+		
+		row_frame = tk.Frame(self.inspection_coords_frame, bg='#2a5565')
+		row_frame.pack(anchor=tk.W, pady=2)
+		
+		entry_id = f"coord_{uuid.uuid4().hex}"  # 고유 ID 생성 (UUID 기반)
+		
+		# 검사 영역 이름
+		tk.Label(row_frame, text="영역명:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		name_entry = tk.Entry(row_frame, font=('Malgun Gothic', 8), width=8)
+		name_entry.insert(0, area_name)
+		name_entry.pack(side=tk.LEFT, padx=2)
+		
+		# sub 마스킹 사용 여부
+		sub_var = tk.BooleanVar()
+		sub_var.set(coords[0] == "_sub" if len(coords) > 0 else False)
+		sub_check = tk.Checkbutton(row_frame, text="sub", variable=sub_var, 
+								  font=('Malgun Gothic', 8), bg='#2a5565', fg='white', selectcolor='#2a5565')
+		sub_check.pack(side=tk.LEFT, padx=2)
+		
+		# X 좌표
+		tk.Label(row_frame, text="X:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		x_entry = tk.Entry(row_frame, font=('Malgun Gothic', 8), width=5)
+		x_entry.insert(0, str(coords[1]) if len(coords) > 1 else '0')
+		x_entry.pack(side=tk.LEFT, padx=2)
+		
+		# Y 좌표
+		tk.Label(row_frame, text="Y:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		y_entry = tk.Entry(row_frame, font=('Malgun Gothic', 8), width=5)
+		y_entry.insert(0, str(coords[2]) if len(coords) > 2 else '0')
+		y_entry.pack(side=tk.LEFT, padx=2)
+		
+		# W 좌표
+		tk.Label(row_frame, text="W:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		w_entry = tk.Entry(row_frame, font=('Malgun Gothic', 8), width=5)
+		w_entry.insert(0, str(coords[3]) if len(coords) > 3 else '100')
+		w_entry.pack(side=tk.LEFT, padx=2)
+		
+		# H 좌표
+		tk.Label(row_frame, text="H:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		h_entry = tk.Entry(row_frame, font=('Malgun Gothic', 8), width=5)
+		h_entry.insert(0, str(coords[4]) if len(coords) > 4 else '100')
+		h_entry.pack(side=tk.LEFT, padx=2)
+		
+		# 각도
+		tk.Label(row_frame, text="각도:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		angle_entry = tk.Entry(row_frame, font=('Malgun Gothic', 8), width=5)
+		angle_entry.insert(0, str(coords[5]) if len(coords) > 5 else '0')
+		angle_entry.pack(side=tk.LEFT, padx=2)
+		
+		# 삭제 버튼
+		delete_button = tk.Button(row_frame, text="삭제", command=lambda: self.delete_inspection_coord(entry_id, row_frame),
+								 font=('Malgun Gothic', 8), bg='#f44336', fg='white')
+		delete_button.pack(side=tk.LEFT, padx=5)
+		
+		# 위젯들을 저장 (고유한 키로 저장)
+		self.widgets[f'{entry_id}_name'] = name_entry
+		self.widgets[f'{entry_id}_sub'] = sub_var
+		self.widgets[f'{entry_id}_x'] = x_entry
+		self.widgets[f'{entry_id}_y'] = y_entry
+		self.widgets[f'{entry_id}_w'] = w_entry
+		self.widgets[f'{entry_id}_h'] = h_entry
+		self.widgets[f'{entry_id}_angle'] = angle_entry
+	
+	def add_inspection_coord(self):
+		"""새 분류 모델 검사 좌표 입력 필드 추가"""
+		self.create_inspection_coord_entry("새영역")
+	
+	def delete_inspection_coord(self, entry_id, frame):
+		"""분류 모델 검사 좌표 입력 필드 삭제"""
+		# 해당 entry_id의 위젯들을 self.widgets에서 제거
+		keys_to_remove = []
+		for key in self.widgets.keys():
+			if key.startswith(entry_id):
+				keys_to_remove.append(key)
+		
+		# 키들 제거
+		for key in keys_to_remove:
+			del self.widgets[key]
+		
+		# 프레임 제거
+		frame.destroy()
+	
+	def load_critical_ng_list(self):
+		"""중대 불량 리스트 로드"""
+		# 기존 체크박스들 제거
+		for widget in self.critical_checkboxes_frame.winfo_children():
+			widget.destroy()
+		
+		# label_ng_conditions에서 라벨들을 가져와서 체크박스 생성
+		if 'label_ng_conditions' in self.client_data:
+			labels = list(self.client_data['label_ng_conditions'].keys())
+			labels = labels + ['DETECTION']  # 각인 검사 불량 추가
+			critical_list = self.client_data.get('critical_ng_list', [])
+			
+			for label in labels:
+				var = tk.BooleanVar()
+				var.set(label in critical_list)
+				self.widgets[f'critical_{label}'] = var
+				
+				checkbox = tk.Checkbutton(self.critical_checkboxes_frame, text=label, variable=var,
+										 font=('Malgun Gothic', 9), bg='#2a5565', fg='white', selectcolor='#2a5565')
+				checkbox.pack(anchor=tk.W, padx=5, pady=1)
+	
+	def load_label_ng_conditions(self):
+		"""label_ng_conditions 로드"""
+		# 기존 입력 필드들 제거
+		for widget in self.label_entries_frame.winfo_children():
+			widget.destroy()
+		
+		if 'label_ng_conditions' in self.client_data:
+			for label, conditions in self.client_data['label_ng_conditions'].items():
+				self.create_label_entry(label, conditions)
+	
+	def create_label_entry(self, label, conditions=None):
+		"""라벨 입력 필드 생성"""
+		if conditions is None:
+			conditions = ['미지정', 90, 2, 3]
+		
+		label_frame = tk.Frame(self.label_entries_frame, bg='#2a5565')
+		label_frame.pack(anchor=tk.W, padx=5, pady=2)
+		
+		# 라벨명
+		tk.Label(label_frame, text=f"라벨: {label}", font=('Malgun Gothic', 9), bg='#2a5565', fg='white').pack(anchor=tk.W)
+		
+		# 입력 필드들
+		input_frame = tk.Frame(label_frame, bg='#2a5565')
+		input_frame.pack(anchor=tk.W, padx=10, pady=1)
+		
+		# 불량명
+		tk.Label(input_frame, text="불량명:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		name_entry = tk.Entry(input_frame, font=('Malgun Gothic', 8), width=10)
+		name_entry.insert(0, str(conditions[0]) if len(conditions) > 0 else '미지정')
+		name_entry.pack(side=tk.LEFT, padx=2)
+		
+		# 검출 제한 수치
+		tk.Label(input_frame, text="제한 수치:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		limit_entry = tk.Entry(input_frame, font=('Malgun Gothic', 8), width=6)
+		limit_entry.insert(0, str(conditions[1]) if len(conditions) > 1 else '90')
+		limit_entry.pack(side=tk.LEFT, padx=2)
+		
+		# 연속 발생
+		tk.Label(input_frame, text="연속 제한:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		consecutive_entry = tk.Entry(input_frame, font=('Malgun Gothic', 8), width=6)
+		consecutive_entry.insert(0, str(conditions[2]) if len(conditions) > 2 else '2')
+		consecutive_entry.pack(side=tk.LEFT, padx=2)
+		
+		# 종합 발생
+		tk.Label(input_frame, text="종합 제한:", font=('Malgun Gothic', 8), bg='#2a5565', fg='white').pack(side=tk.LEFT)
+		total_entry = tk.Entry(input_frame, font=('Malgun Gothic', 8), width=6)
+		total_entry.insert(0, str(conditions[3]) if len(conditions) > 3 else '3')
+		total_entry.pack(side=tk.LEFT, padx=2)
+		
+		# 위젯들을 저장
+		self.widgets[f'label_{label}_name'] = name_entry
+		self.widgets[f'label_{label}_limit'] = limit_entry
+		self.widgets[f'label_{label}_consecutive'] = consecutive_entry
+		self.widgets[f'label_{label}_total'] = total_entry
+	
+	def save_settings(self):
+		"""설정값들을 저장"""
+		try:
+			# Boolean 값들 저장 (검증 없이)
+			for key in ['detection_use', 'inspection_only', 'origin_image_capture', 'ng_image_capture', 'inspection_image_capture']:
+				self.client_data[key] = self.widgets[key].get()
+			
+			# 1. 이름 검증
+			name_value = self.widgets['name'].get().strip()
+			if not name_value:
+				messagebox.showerror("오류", f"{self.client_id}의 클라이언트 이름을 입력해주세요.")
+				return False
+			self.client_data['name'] = name_value
+			
+			# 2. 검사 프레임 수 검증
+			try:
+				inspection_frame_value = int(self.widgets['inspection_frame'].get())
+				if inspection_frame_value <= 0:
+					messagebox.showerror("오류", f"{self.client_id}의 검사 프레임 수는 1 이상이어야 합니다.")
+					return False
+				self.client_data['inspection_frame'] = inspection_frame_value
+			except ValueError:
+				messagebox.showerror("오류", f"{self.client_id}의 검사 프레임 수는 숫자로 입력해주세요.")
+				return False
+			
+			# 3. 불량별 설정 검증 (이름, 정수 3칸)
+			if not self.validate_label_ng_conditions():
+				return False
+			
+			# 4. 각인 검사 프레임 검증
+			if self.widgets['detection_use'].get():
+				try:
+					value = self.widgets['detection_frame'].get().strip()
+					if not value:
+						messagebox.showerror("오류", f"{self.client_id}의 각인 검사 프레임을 입력해주세요.")
+						return False
+					# 쉼표로 구분된 문자열을 리스트로 변환
+					frame_list = [int(x.strip()) for x in value.split(',')]
+					if not frame_list or any(f <= 0 for f in frame_list):
+						messagebox.showerror("오류", f"{self.client_id}의 각인 검사 프레임은 1 이상의 숫자여야 합니다.")
+						return False
+					self.client_data['detection_frame'] = frame_list
+				except ValueError:
+					messagebox.showerror("오류", f"{self.client_id}의 각인 검사 프레임 값이 올바르지 않습니다. (예: 5,10,15)")
+					return False
+			else:
+				# 각인 검사가 비활성화된 경우 빈 리스트로 설정
+				self.client_data['detection_frame'] = []
+			
+			# 5. 각인 양품 개수 검증
+			try:
+				ok_engrave_value = int(self.widgets['ok_engrave'].get())
+				if ok_engrave_value < 0:
+					messagebox.showerror("오류", f"{self.client_id}의 각인 양품 개수는 0 이상이어야 합니다.")
+					return False
+				self.client_data['ok_engrave'] = ok_engrave_value
+			except ValueError:
+				messagebox.showerror("오류", f"{self.client_id}의 각인 양품 개수는 숫자로 입력해주세요.")
+				return False
+			
+			# 6. 각인 검사 좌표 검증
+			detection_coords_raw = [
+				self.widgets['detection_coords_x'].get().strip(),
+				self.widgets['detection_coords_y'].get().strip(),
+				self.widgets['detection_coords_w'].get().strip(),
+				self.widgets['detection_coords_h'].get().strip()
+			]
+			if self.widgets['detection_use'].get():
+				if not self.validate_coord_list(detection_coords_raw, f"{self.client_id}의 각인 검사"):
+					return False
+				detection_coords = [int(x) for x in detection_coords_raw]
+			else:
+				detection_coords = [int(x) if x else 0 for x in detection_coords_raw]
+			self.client_data['detection_coords'] = detection_coords
+			
+			# 7. 화면 출력 좌표 검증
+			show_coords_raw = [
+				self.widgets['show_coord_x'].get().strip(),
+				self.widgets['show_coord_y'].get().strip(),
+				self.widgets['show_coord_w'].get().strip(),
+				self.widgets['show_coord_h'].get().strip()
+			]
+			if not self.validate_coord_list(show_coords_raw, f"{self.client_id}의 화면 출력"):
+				return False
+			show_coords = [int(x) for x in show_coords_raw]
+			self.client_data['show_coord'] = show_coords
+			
+			# 8. 분류 모델 검사 좌표 검증 (영역명, 4개좌표, 각도)
+			if not self.validate_inspection_coords():
+				return False
+			
+			# 검증 완료 후 저장 함수들 호출
+			self.save_label_ng_conditions()
+			if not self.save_inspection_coords():
+				return False  # 중복 확인에서 취소된 경우
+			
+			# 중대 불량 리스트 저장
+			self.save_critical_ng_list()
+			
+			print(f"[SAVE] Client {self.client_id} settings updated successfully")
+			return True
+			
+		except Exception as e:
+			messagebox.showerror("오류", f"저장 중 오류가 발생했습니다: {str(e)}")
+			raise e  # 상위 메서드에서 처리할 수 있도록 예외를 다시 발생시킴
+	
+	def save_critical_ng_list(self):
+		"""중대 불량 리스트 저장"""
+		critical_list = []
+		for key, var in self.widgets.items():
+			if key.startswith('critical_') and isinstance(var, tk.BooleanVar):
+				if var.get():
+					label = key.replace('critical_', '')
+					critical_list.append(label)
+		
+		self.client_data['critical_ng_list'] = critical_list
+	
+	def save_label_ng_conditions(self):
+		"""label_ng_conditions 저장"""
+		label_conditions = {}
+		
+		# 기존 label_ng_conditions에서 라벨들을 가져와서 저장
+		if 'label_ng_conditions' in self.client_data:
+			for label in self.client_data['label_ng_conditions'].keys():
+				if f'label_{label}_name' in self.widgets:
+					try:
+						name = self.widgets[f'label_{label}_name'].get()
+						limit = int(self.widgets[f'label_{label}_limit'].get())
+						consecutive = int(self.widgets[f'label_{label}_consecutive'].get())
+						total = int(self.widgets[f'label_{label}_total'].get())
+						
+						label_conditions[label] = [name, limit, consecutive, total]
+					except:
+						messagebox.showerror("오류", f"라벨 {label}의 설정값이 올바르지 않습니다.")
+						return
+		
+		self.client_data['label_ng_conditions'] = label_conditions
+
+	def destroy(self):
+		"""프레임 제거"""
+		self.frame.destroy()
+
+	def save_inspection_coords(self):
+		"""분류 모델 검사 좌표 저장"""
+		inspection_coords = {}
+		
+		# 위젯에서 coord로 시작하는 키들을 찾아서 처리
+		coord_entries = {}
+		
+		for key, widget in self.widgets.items():
+			if key.startswith('coord_'):
+				# coord_숫자_필드명 형태에서 숫자와 필드명 추출
+				parts = key.split('_')
+				if len(parts) >= 3:
+					try:
+						entry_id = f"{parts[0]}_{parts[1]}"  # coord_숫자
+						field_name = '_'.join(parts[2:])  # 나머지 부분이 필드명
+						
+						if entry_id not in coord_entries:
+							coord_entries[entry_id] = {}
+						coord_entries[entry_id][field_name] = widget
+					except ValueError:
+						# 숫자가 아닌 경우 건너뛰기
+						continue
+			   
+		# 중복된 영역명 확인
+		area_names = []
+		for entry_id, fields in coord_entries.items():
+			try:
+				required_fields = ['name', 'sub', 'x', 'y', 'w', 'h', 'angle']
+				if not all(field in fields for field in required_fields):
+					continue
+				
+				area_name = fields['name'].get()
+				if area_name:  # 영역명이 비어있지 않으면 추가
+					area_names.append(area_name)
+			except (ValueError, KeyError):
+				continue
+		
+		# 중복된 영역명이 있는지 확인
+		duplicate_names = [name for name in set(area_names) if area_names.count(name) > 1]
+		if duplicate_names:
+			duplicate_list = ", ".join(duplicate_names)
+			result = messagebox.askyesno("중복 확인", 
+									   f"다음 영역명이 중복됩니다:\n{duplicate_list}\n\n"
+									   f"중복된 영역명은 자동으로 하나만 저장됩니다.\n"
+									   f"계속 진행하시겠습니까?")
+			if not result:
+				return False
+		
+		# 각 좌표 엔트리를 딕셔너리로 변환
+		for entry_id, fields in coord_entries.items():
+			try:
+				# 필수 필드들이 모두 있는지 확인
+				required_fields = ['name', 'sub', 'x', 'y', 'w', 'h', 'angle']
+				if not all(field in fields for field in required_fields):
+					continue
+				
+				area_name = fields['name'].get()
+				if not area_name:  # 영역명이 비어있으면 건너뛰기
+					continue
+				
+				sub_used = fields['sub'].get()
+				x = int(fields['x'].get())
+				y = int(fields['y'].get())
+				w = int(fields['w'].get())
+				h = int(fields['h'].get())
+				angle = int(fields['angle'].get())
+				
+				# sub 마스킹 사용 여부에 따라 첫 번째 값 설정
+				first_value = "_sub" if sub_used else ""
+				
+				inspection_coords[area_name] = [first_value, x, y, w, h, angle]
+				
+			except ValueError:
+				messagebox.showerror("오류", f"분류 모델 검사 좌표 값이 올바르지 않습니다.")
+				return False
+			except KeyError as e:
+				continue
+		
+		self.client_data['inspection_coords'] = inspection_coords
+		return True
+
+	def get_settings(self):
+		"""현재 위젯의 설정값들을 딕셔너리로 반환 (JSON 형식과 동일하게)"""
+		settings = {}
+		
+		# Boolean 값들
+		for key in ['detection_use', 'inspection_only', 'origin_image_capture', 'ng_image_capture', 'inspection_image_capture']:
+			settings[key] = self.widgets[key].get()
+		
+		# 문자열 값들
+		for key in ['name']:
+			settings[key] = self.widgets[key].get()
+		
+		# 디텍션 검사 프레임 (문자열을 리스트로 변환)
+		detection_frame_str = self.widgets['detection_frame'].get().strip()
+		if detection_frame_str:
+			try:
+				settings['detection_frame'] = [int(x.strip()) for x in detection_frame_str.split(',')]
+			except ValueError:
+				settings['detection_frame'] = []
+		else:
+			settings['detection_frame'] = []
+		
+		# 좌표 값들 (문자열을 정수로 변환)
+		show_coords = [
+			int(self.widgets['show_coord_x'].get()) if self.widgets['show_coord_x'].get() else 0,
+			int(self.widgets['show_coord_y'].get()) if self.widgets['show_coord_y'].get() else 0,
+			int(self.widgets['show_coord_w'].get()) if self.widgets['show_coord_w'].get() else 0,
+			int(self.widgets['show_coord_h'].get()) if self.widgets['show_coord_h'].get() else 0
+		]
+		settings['show_coord'] = show_coords
+		
+		detection_coords = [
+			int(self.widgets['detection_coords_x'].get()) if self.widgets['detection_coords_x'].get() else 0,
+			int(self.widgets['detection_coords_y'].get()) if self.widgets['detection_coords_y'].get() else 0,
+			int(self.widgets['detection_coords_w'].get()) if self.widgets['detection_coords_w'].get() else 0,
+			int(self.widgets['detection_coords_h'].get()) if self.widgets['detection_coords_h'].get() else 0
+		]
+		settings['detection_coords'] = detection_coords
+		
+		# 분류 모델 검사 좌표 (문자열을 정수로 변환)
+		inspection_coords = {}
+		coord_entries = {}
+		
+		for key, widget in self.widgets.items():
+			if key.startswith('coord_'):
+				parts = key.split('_')
+				if len(parts) >= 3:
+					try:
+						entry_id = f"{parts[0]}_{parts[1]}"
+						field_name = '_'.join(parts[2:])
+						
+						if entry_id not in coord_entries:
+							coord_entries[entry_id] = {}
+						coord_entries[entry_id][field_name] = widget
+					except ValueError:
+						continue
+			   
+		for entry_id, fields in coord_entries.items():
+			try:
+				required_fields = ['name', 'sub', 'x', 'y', 'w', 'h', 'angle']
+				if not all(field in fields for field in required_fields):
+					continue
+				
+				area_name = fields['name'].get()
+				if not area_name:
+					continue
+				
+				sub_used = fields['sub'].get()
+				x = int(fields['x'].get()) if fields['x'].get() else 0
+				y = int(fields['y'].get()) if fields['y'].get() else 0
+				w = int(fields['w'].get()) if fields['w'].get() else 0
+				h = int(fields['h'].get()) if fields['h'].get() else 0
+				angle = int(fields['angle'].get()) if fields['angle'].get() else 0
+				
+				first_value = "_sub" if sub_used else ""
+				inspection_coords[area_name] = [first_value, x, y, w, h, angle]
+				
+			except (ValueError, KeyError):
+				continue
+		
+		settings['inspection_coords'] = inspection_coords
+		
+		# 정수 값들 (문자열을 정수로 변환)
+		for key in ['ok_engrave', 'inspection_frame']:
+			try:
+				settings[key] = int(self.widgets[key].get()) if self.widgets[key].get() else 0
+			except ValueError:
+				settings[key] = 0
+		
+		# 중대 불량 리스트
+		critical_list = []
+		for key, var in self.widgets.items():
+			if key.startswith('critical_') and isinstance(var, tk.BooleanVar):
+				if var.get():
+					label = key.replace('critical_', '')
+					critical_list.append(label)
+		settings['critical_ng_list'] = critical_list
+		
+		# label_ng_conditions (문자열을 정수로 변환)
+		label_conditions = {}
+		if 'label_ng_conditions' in self.client_data:
+			for label in self.client_data['label_ng_conditions'].keys():
+				if f'label_{label}_name' in self.widgets:
+					try:
+						name = self.widgets[f'label_{label}_name'].get()
+						limit = int(self.widgets[f'label_{label}_limit'].get()) if self.widgets[f'label_{label}_limit'].get() else 0
+						consecutive = int(self.widgets[f'label_{label}_consecutive'].get()) if self.widgets[f'label_{label}_consecutive'].get() else 0
+						total = int(self.widgets[f'label_{label}_total'].get()) if self.widgets[f'label_{label}_total'].get() else 0
+						
+						label_conditions[label] = [name, limit, consecutive, total]
+					except ValueError:
+						continue
+		settings['label_ng_conditions'] = label_conditions
+		
+		return settings
+	
+	def get_inspection_coords_from_widgets(self):
+		"""위젯에서 분류 모델 검사 좌표를 가져오기"""
+		inspection_coords = {}
+		
+		# 위젯에서 coord로 시작하는 키들을 찾아서 처리
+		coord_entries = {}
+		
+		for key, widget in self.widgets.items():
+			if key.startswith('coord_'):
+				# coord_숫자_필드명 형태에서 숫자와 필드명 추출
+				parts = key.split('_')
+				if len(parts) >= 3:
+					try:
+						entry_id = f"{parts[0]}_{parts[1]}"  # coord_숫자
+						field_name = '_'.join(parts[2:])  # 나머지 부분이 필드명
+						
+						if entry_id not in coord_entries:
+							coord_entries[entry_id] = {}
+						coord_entries[entry_id][field_name] = widget
+					except ValueError:
+						# 숫자가 아닌 경우 건너뛰기
+						continue
+			   
+		# 각 좌표 엔트리를 딕셔너리로 변환
+		for entry_id, fields in coord_entries.items():
+			try:
+				# 필수 필드들이 모두 있는지 확인
+				required_fields = ['name', 'sub', 'x', 'y', 'w', 'h', 'angle']
+				if not all(field in fields for field in required_fields):
+					continue
+				
+				area_name = fields['name'].get()
+				if not area_name:  # 영역명이 비어있으면 건너뛰기
+					continue
+				
+				sub_used = fields['sub'].get()
+				x = fields['x'].get()
+				y = fields['y'].get()
+				w = fields['w'].get()
+				h = fields['h'].get()
+				angle = fields['angle'].get()
+				
+				# sub 마스킹 사용 여부에 따라 첫 번째 값 설정
+				first_value = "_sub" if sub_used else ""
+				
+				inspection_coords[area_name] = [first_value, x, y, w, h, angle]
+				
+			except KeyError as e:
+				continue
+		
+		return inspection_coords
+
+	def validate_label_ng_conditions(self):
+		"""불량별 설정 검증 (이름, 정수 3칸)"""
+		if 'label_ng_conditions' not in self.client_data:
+			return True
+			
+		for label in self.client_data['label_ng_conditions'].keys():
+			if f'label_{label}_name' in self.widgets:
+				try:
+					# 이름 검증
+					name = self.widgets[f'label_{label}_name'].get().strip()
+					if not name:
+						messagebox.showerror("오류", f"{self.client_id}의 {label}라벨의 이름을 입력해주세요.")
+						return False
+					
+					# 정수 3칸 검증
+					limit = int(self.widgets[f'label_{label}_limit'].get())
+					consecutive = int(self.widgets[f'label_{label}_consecutive'].get())
+					total = int(self.widgets[f'label_{label}_total'].get())
+					
+					# limit 값 검증
+					if limit < 0 or limit > 100:
+						messagebox.showerror("오류", f"{self.client_id}의 라벨 {label} 제한 수치는 0~100 사이여야 합니다.")
+						return False
+					
+					if consecutive < 0 or total < 0:
+						messagebox.showerror("오류", f"{self.client_id}의 라벨 {label} 설정값은 0 이상이어야 합니다.")
+						return False
+						
+				except ValueError:
+					messagebox.showerror("오류", f"{self.client_id}의 라벨 {label} 설정값은 숫자로 입력해주세요.")
+					return False
+		return True
+
+	def validate_inspection_coords(self):
+		"""분류 모델 검사 좌표 검증 (영역명, 4개좌표, 각도)"""
+		coord_entries = {}
+		
+		# 위젯에서 coord로 시작하는 키들을 찾아서 처리
+		for key, widget in self.widgets.items():
+			if key.startswith('coord_'):
+				parts = key.split('_')
+				if len(parts) >= 3:
+					try:
+						entry_id = f"{parts[0]}_{parts[1]}"  # coord_숫자
+						field_name = '_'.join(parts[2:])  # 나머지 부분이 필드명
+						
+						if entry_id not in coord_entries:
+							coord_entries[entry_id] = {}
+						coord_entries[entry_id][field_name] = widget
+					except ValueError:
+						continue
+			   
+		# 각 좌표 엔트리 검증
+		for entry_id, fields in coord_entries.items():
+			try:
+				# 필수 필드들이 모두 있는지 확인
+				required_fields = ['name', 'sub', 'x', 'y', 'w', 'h', 'angle']
+				if not all(field in fields for field in required_fields):
+					continue
+				
+				# 영역명 검증
+				area_name = fields['name'].get().strip()
+				if not area_name:
+					messagebox.showerror("오류", f"{self.client_id}의 분류 모델 검사 좌표에 영역명을 입력해주세요.")
+					return False
+				
+				# 4개 좌표 검증 (반복성 있게)
+				coord_raw = [fields['x'].get().strip(), fields['y'].get().strip(), fields['w'].get().strip(), fields['h'].get().strip()]
+				if not self.validate_coord_list(coord_raw, f"{self.client_id}의 분류 모델 검사 좌표 {area_name}"):
+					return False
+				x, y, w, h = [int(val) for val in coord_raw]
+				
+				# 각도 검증
+				angle_raw = [fields['angle'].get().strip()]
+				if not self.validate_coord_list(angle_raw, f"{self.client_id}의 분류 모델 검사 좌표 {area_name}"):
+					return False
+				angle = int(angle_raw[0])
+				if angle > 360:
+					messagebox.showerror("오류", f"{self.client_id}의 분류 모델 검사 좌표 {area_name}의 각도는 0~360 사이여야 합니다.")
+					return False
+				
+			except ValueError:
+				messagebox.showerror("오류", f"{self.client_id}의 분류 모델 검사 좌표 {area_name}의 값이 올바르지 않습니다.")
+				return False
+			except KeyError:
+				continue
+		return True
+	def validate_coord_list(self, coord_list, label):
+		for val in coord_list:
+			if val == "" or val is None:
+				messagebox.showerror("오류", f"{label} 좌표에 빈 값이 있습니다.")
+				return False
+			try:
+				num = int(val)
+			except ValueError:
+				messagebox.showerror("오류", f"{label} 좌표에 숫자가 아닌 값이 있습니다.")
+				return False
+			if num < 0:
+				messagebox.showerror("오류", f"{label} 좌표에 음수가 있습니다.")
+				return False
+		return True
+
+
+# ▶ 최근 불량 확인
+class RecentNgCheckFrame(tk.Frame):
+	def __init__(self, master=None):
+		super().__init__(master)
+		self.master = master
+		# bg 3단계로 구성 1.클라이언트 선택, 2.검사 영역 선택, 3.이미지 확인
+		self.first_bg = ImageTk.PhotoImage(file=f"bg/{line_type}/recent_ng_check_bg.png")
+		self.second_bg = ImageTk.PhotoImage(file=f"bg/common/select_check_part_bg.png")
+		self.third_bg = ImageTk.PhotoImage(file=f"bg/common/recent_image_check_bg.png")
+		
+		self.client_blink_image = ImageTk.PhotoImage(file=f"bg/{line_type}/recent_ng_check_blink.png")
+
+		self.color_palette = [
+			(255, 99, 71),    # Tomato
+			(255, 165, 0),    # Orange
+			(255, 215, 0),    # Gold
+			(50, 205, 50),    # Lime Green
+			(0, 191, 255),    # Deep Sky Blue
+			(30, 144, 255),   # Dodger Blue
+			(138, 43, 226),   # Blue Violet
+			(255, 20, 147),   # Deep Pink
+			(0, 255, 255),    # Cyan
+			(255, 105, 180),  # Hot Pink
+		]
+
+		self.state = 'first'  # first, second, third // first: 클라이언트 선택, second: 검사 영역 선택, third: 이미지 확인
+		self.selected_client_id = None
+		self.selected_area_name = None
+
+		self.show_origin_image = None
+
+		self.ok_images = []
+		self.ng_images = []
+		self.ok_index = 0
+		self.ng_index = 0
+
+		self.click_coord_map = {}
+		for i in range(client_num):
+			if i < 3:
+				self.click_coord_map[f"{line_config['client_ids'][i]}"] = [96+(i*441), 140, 400, 300]
+			else:
+				self.click_coord_map[f"{line_config['client_ids'][i]}"] = [96+((i-3)*441), 553, 400, 300]
+		
+		# 깜빡임 스레드 제어를 위한 변수
+		self.blink_thread = None
+		self.blink_running = False
+
+		self.create_widgets()
+		
+	def create_widgets(self):
+		self.grid(row=0, column=0)
+		self.recent_canvas = tk.Canvas(self, width=1920, height=1080)
+		self.BG = self.recent_canvas.create_image(0, 0, image=self.first_bg, anchor="nw")
+
+		# first 클라이언트 영역 깜빡임 위치
+		self.blink_place = self.recent_canvas.create_image(84, 128, image=self.client_blink_image, anchor="nw", state="hidden")
+
+		# second 원본 이미지 표시 위치
+		self.origin_image_place = self.recent_canvas.create_image(552, 224, anchor="nw", state="hidden")  
+
+		# third 검사 영역 표시 위치
+		self.ok_image_place = self.recent_canvas.create_image(210, 278, anchor="nw", state="hidden")  # 양품 이미지
+		self.ng_image_place = self.recent_canvas.create_image(1115, 278, anchor="nw", state="hidden")  # 불량 이미지
+
+		self.recent_canvas.bind("<Button-1>", self.main_btn)
+		self.recent_canvas.pack()
+	
+	def tkraise(self):
+		super().tkraise()
+		self.state = 'first'
+		self.clear_screen()
+		self.recent_canvas.itemconfig(self.BG, image=self.first_bg)
+
+		# 새로운 스레드 시작
+		self.blink_running = True
+		self.blink_thread = threading.Thread(target=self.blink_on, daemon=True)
+		self.blink_thread.start()
+
+	def main_btn(self, event):
+		x = event.x
+		y = event.y
+
+		if 1870 < x < 1912 and 11 < y < 53:
+			print("program exit")
+			MF.on_closing()
+		
+		# 메인 화면 버튼 클릭
+		elif 89 < x < 271 and 976 < y < 1051:
+			print("main frame open")
+			MF.tkraise()
+		
+		# 이력 조회 버튼 클릭
+		elif 1189 < x < 1377 and 972 < y < 1055:
+			print("history frame open")
+			HF.tkraise()
+		
+		# 관리자 버튼 클릭
+		elif 1477 < x < 1659 and 972 < y < 1055:
+			print("admin frame open")
+			AF.tkraise()
+
+		# 최근 불량 확인 버튼 클릭
+		elif 644 < x < 826 and 976 < y < 1051:
+			print("recent ng check frame close")
+			RN.tkraise()
+
+		else:
+			if self.state == 'first':
+				for client_id, coord in self.click_coord_map.items():  # 클라이언트 영역 클릭
+					if coord[0] < x < coord[0] + coord[2] and coord[1] < y < coord[1] + coord[3]:
+						print(f"client {client_id} clicked")
+						self.selected_client_id = client_id
+						self.blink_off()
+						self.select_part()
+						break
+
+			elif self.state == 'second':
+				# 이미지 내 상대 좌표
+				rel_x = event.x - 552
+				rel_y = event.y - 224
+				if rel_x < 0 or rel_y < 0:  # 이미지 바깥 클릭
+					return  
+
+				for area in self.clickable_areas:
+					x0, y0, x1, y1 = area['coords']
+					if x0 <= rel_x <= x1 and y0 <= rel_y <= y1:
+						print(f"Clicked area: {area['key']}")
+						self.selected_area_name = area['key']
+						self.select_area()
+						break
+
+			elif self.state == 'third':
+				if 128 < x < 188 and 546 < y < 606:  # OK ←
+					if self.ok_images and self.ok_index > 0:
+						self.ok_index -= 1
+						self.show_ok_image()
+				elif 828 < x < 888 and 546 < y < 606:  # OK →
+					if self.ok_images and self.ok_index < len(self.ok_images) - 1:
+						self.ok_index += 1
+						self.show_ok_image()
+				elif 1034 < x < 1094 and 546 < y < 606:  # NG ←
+					if self.ng_images and self.ng_index > 0:
+						self.ng_index -= 1
+						self.show_ng_image()
+				elif 1734 < x < 1794 and 546 < y < 606:  # NG →
+					if self.ng_images and self.ng_index < len(self.ng_images) - 1:
+						self.ng_index += 1
+						self.show_ng_image()
+
+	def blink_on(self):
+		"""클라이언트 영역 깜빡임 시작"""
+		while self.blink_running:
+			# UI 업데이트는 메인 스레드에서 실행
+			self.master.after(0, lambda: self.recent_canvas.itemconfig(self.blink_place, state="normal"))
+			time.sleep(0.5)
+			if not self.blink_running:
+				break
+			
+			self.master.after(0, lambda: self.recent_canvas.itemconfig(self.blink_place, state="hidden"))
+			time.sleep(0.5)
+			if not self.blink_running:
+				break
+
+	def blink_off(self):
+		"""클라이언트 영역 깜빡임 종료"""
+		self.blink_running = False
+		self.recent_canvas.itemconfig(self.blink_place, state="hidden")
+		# 스레드가 실행 중이라면 종료될 때까지 잠시 대기
+		if self.blink_thread and self.blink_thread.is_alive():
+			self.blink_thread.join(timeout=1.0)
+
+	def clear_screen(self):
+		"""화면 전환 시 화면 초기화"""
+		self.recent_canvas.itemconfig(self.origin_image_place, state="hidden")
+		self.recent_canvas.itemconfig(self.ok_image_place, state="hidden")
+		self.recent_canvas.itemconfig(self.ng_image_place, state="hidden")
+		self.blink_off()
+		self.clickable_areas = []
+
+	def make_show_origin_image(self, image, inspection_coords, detection_coords):
+		"""원본 이미지 표시 : /3 크기로 축소 (한글 라벨 표시, 좌표 표시, 랜덤색상)"""
+		try:
+			font = ImageFont.truetype("C:/Windows/Fonts/malgunbd.ttf", 48)
+		except:
+			font = ImageFont.load_default()
+
+		# OpenCV 이미지를 PIL로 변환
+		pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+		draw = ImageDraw.Draw(pil_img)
+
+		# 클릭 가능한 영역 정보 저장 (1/3 크기로 리사이즈된 좌표)
+		self.clickable_areas = []
+
+		# 분류 검사 영역 표시
+		if inspection_coords:
+			for idx, (key, value) in enumerate(inspection_coords.items()):
+				x, y, w, h = int(value[1]), int(value[2]), int(value[3]), int(value[4])
+				x0, y0 = x, y
+				x1, y1 = x + w, y + h
+				color = self.color_palette[idx % len(self.color_palette)]
+				draw.rectangle([x0, y0, x1, y1], outline=color, width=7)
+				text_bbox = draw.textbbox((x0, y0), str(key), font=font)
+				text_height = text_bbox[3] - text_bbox[1] + 15
+				draw.text((x0, y0 - text_height - 5), str(key), fill=color, font=font)
+				
+				# 1/3 크기로 리사이즈된 좌표 저장
+				resized_x0, resized_y0 = x0 // 3, y0 // 3
+				resized_x1, resized_y1 = x1 // 3, y1 // 3
+				self.clickable_areas.append({
+					'key': key,
+					'coords': [resized_x0, resized_y0, resized_x1, resized_y1]
+				})
+
+		# 각인 검사 영역 표시
+		if detection_coords:
+			x, y, w, h = int(detection_coords[0]), int(detection_coords[1]), int(detection_coords[2]), int(detection_coords[3])
+			x0, y0 = x, y
+			x1, y1 = x + w, y + h
+			color = self.color_palette[-1]
+			draw.rectangle([x0, y0, x1, y1], outline=color, width=7)
+			text_bbox = draw.textbbox((x0, y0), "각인 검사", font=font)
+			text_height = text_bbox[3] - text_bbox[1] + 15
+			draw.text((x0, y0 - text_height - 5), "각인 검사", fill=color, font=font)
+			
+			# 1/3 크기로 리사이즈된 좌표 저장
+			resized_x0, resized_y0 = x0 // 3, y0 // 3
+			resized_x1, resized_y1 = x1 // 3, y1 // 3
+			self.clickable_areas.append({
+				'key': 'engrave',
+				'coords': [resized_x0, resized_y0, resized_x1, resized_y1]
+			})
+
+		# PIL 이미지를 1/3로 리사이즈
+		width, height = pil_img.size
+		new_width = width // 3
+		new_height = height // 3
+		resized_image = pil_img.resize((new_width, new_height), Image.LANCZOS)
+		resized_image = ImageTk.PhotoImage(resized_image)
+		return resized_image
+
+	def select_part(self):
+		"""검사 영역 선택"""
+		self.state = 'second'
+		self.recent_canvas.itemconfig(self.BG, image=self.second_bg)
+		origin_image_path = f'recent_images/{MB.model_name}/{self.selected_client_id}/origin/origin.jpg'
+		origin_image = cv2.imread(origin_image_path)
+		if origin_image is None:
+			messagebox.showerror("오류", f"{self.selected_client_id}의 원본 이미지가 없습니다.\n검사를 시작하면 자동으로 원본 이미지가 저장됩니다.")
+			return
+
+		inspection_coords = model_info['models'][MB.model_name][self.selected_client_id]['inspection_coords']
+		detection_coords = model_info['models'][MB.model_name][self.selected_client_id]['detection_coords']
+		self.show_origin_image = self.make_show_origin_image(origin_image, inspection_coords, detection_coords)
+		self.recent_canvas.itemconfig(self.origin_image_place, image=self.show_origin_image, state="normal")
+	
+	def select_area(self):
+		"""검사 영역 선택"""
+		self.state = 'third'
+		self.clear_screen()
+		self.recent_canvas.itemconfig(self.BG, image=self.third_bg)
+
+		ok_folder = f'recent_images/{MB.model_name}/{self.selected_client_id}/{self.selected_area_name}/ok'
+		ng_folder = f'recent_images/{MB.model_name}/{self.selected_client_id}/{self.selected_area_name}/ng'
+
+		self.ok_images = self.get_sorted_image_list(ok_folder)
+		self.ng_images = self.get_sorted_image_list(ng_folder)
+
+		self.ok_index = 0
+		self.ng_index = 0
+
+		self.show_ok_image()
+		self.show_ng_image()
+
+	def get_sorted_image_list(self, folder_path):
+		"""이미지 파일 목록 조회"""
+		image_files = []
+		for ext in ('*.jpg', '*.png'):
+			image_files.extend(glob.glob(os.path.join(folder_path, ext)))
+		# 파일 수정시간 기준 내림차순 정렬 (최신이 앞)
+		image_files.sort(key=os.path.getmtime, reverse=True)
+		return image_files
+
+	def show_ok_image(self):
+		if self.ok_images:
+			img = Image.open(self.ok_images[self.ok_index])
+			img = img.resize((597, 597), Image.LANCZOS)
+			self.ok_photo = ImageTk.PhotoImage(img)
+			self.recent_canvas.itemconfig(self.ok_image_place, image=self.ok_photo, state="normal")
+		else:
+			self.recent_canvas.itemconfig(self.ok_image_place, image="", state="hidden")
+
+	def show_ng_image(self):
+		if self.ng_images:
+			img = Image.open(self.ng_images[self.ng_index])
+			img = img.resize((597, 597), Image.LANCZOS)
+			self.ng_photo = ImageTk.PhotoImage(img)
+			self.recent_canvas.itemconfig(self.ng_image_place, image=self.ng_photo, state="normal")
+		else:
+			self.recent_canvas.itemconfig(self.ng_image_place, image="", state="hidden")
 
 
 if __name__ == "__main__":
-    print("[INFO] '24.02.29 Update")
-    DTT = DataTrimThread()
-    DB = Database('bearingart', 'model_data', LINE) # DB명, table명, line명
+	base_path = os.path.dirname(os.path.abspath(__file__))
+	folder_name = os.path.basename(base_path)
+	line_type = folder_name.split("_")[0].lower()  # cone, cup
+	line_name = folder_name.split("_")[1]  # SS9
+	client_num = 6 if line_type == 'cone' else 5
+	line_config = get_line_config(line_type)
+	print(f"Hello, I am {line_type} from {line_name}. Did you call me?")
+	print(f"Now, I shall open my {client_num} eyes")
+	
+	# 모델 정보 로드
+	with open('config/info.json', 'r', encoding='utf-8') as f:
+		model_info = json.load(f)
 
-    main_frame = MainFrame(master=root)
-    history_frame = HistoryFrame(master=root)
-    history_produce_frame = historyProduceFrame(master=root)
-    ngcage_frame = ngCageShowFrame(master=root)
-    management_frame = AdminManagementFrame(master=root)
-    management_frame.management_State_Load()
-    model_frame = ModelManageFrame(master=root, db_inst=DB)
-    NF = NgcheckFrame(master=root)
-    main_frame.tkraise()
+	root = tk.Tk()
+	LM = LogManager()
+	SS = SocketServer('192.168.50.9', 9999)
+	MB = Modbus()
+	DB = MySql(LM, line_config)
+	MF = MainFrame(master=root)
+	HW = HardWork()
+	HF = HistoryFrame(master=root)
+	AF = AdminFrame(master=root)
+	RN = RecentNgCheckFrame(master=root)
+	ER = ExcelReportGenerator(LM, DB, line_type, line_name)
 
-    # 데이터 정리 쓰레드
-    DTT.daemon = True
-    DTT.start()
+	threading.Thread(target=MB.read_signal_thread, daemon=True).start()
+	threading.Thread(target=MB.send_signal_thread, daemon=True).start()
+	threading.Thread(target=SS.connect_thread, daemon=True).start()
+	threading.Thread(target=SS.message_sender, daemon=True).start()
+	threading.Thread(target=HW.check_mail_send_time, daemon=True).start()
 
-    # 서버클라이언트 소켓 쓰레드
-    TSD = TransferSocketData()
-    TSD.daemon = True
-    TSD.start()
 
-    STH = serialTRAN()
-    STH.daemon = True
-    STH.start()
+	root.protocol("WM_DELETE_WINDOW", MF.on_closing)
+	MF.tkraise()
+	root.mainloop()
 
-    bearingartDB = MysqlDB()
 
-    MQ = MQueue()
-    proc = Process(target=SaveImages, args=(MQ,))
-    proc.daemon = True
-    proc.start()
 
-    transfer = Transfer(LINE, CodeSetup)       # 데이터 송, 수신 모듈
-    jsonparser = JASONparser(LINE, CodeSetup)  # json 파싱 모듈
 
-    loadCount()
 
-    DB = DB_DataRequest()
-    PXM = OpenpyxlModul()
-    Email = EmailProcessClass()
-
-    TE = TimeExcel()
-    threading.Thread(target=TE.run, daemon=True).start()
-
-    
-    Thread(target=main_frame.popup_thread, daemon=True).start()
-    Thread(target=NF.popup_thread, daemon=True).start() 
-    
-    main_frame.ngSettingLoad("load")
-
-    root.protocol("WM_DELETE_WINDOW", on_closing)
-    root.mainloop()
